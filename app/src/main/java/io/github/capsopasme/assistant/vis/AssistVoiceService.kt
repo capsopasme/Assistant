@@ -20,6 +20,7 @@ import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
 import android.util.Log
 import io.github.capsopasme.assistant.system.AssistantSetup
+import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,7 @@ class AssistVoiceService : VoiceInteractionService() {
         super.onReady()
         // never collect the screen's view tree or a screenshot when invoked
         disabledShowContext = VoiceInteractionSession.SHOW_WITH_ASSIST or VoiceInteractionSession.SHOW_WITH_SCREENSHOT
+        KeepAliveService.sync(this)
         // bound at boot: if HyperOS reset part of the setup (power key → 小爱), put it back
         if (Prefs.get(this).keepAssistant) {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { s ->
@@ -96,6 +98,8 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         Marks.write(context, Marks.SHOW)
+        // the window is visible now, so (re)starting the keep-alive service is allowed
+        KeepAliveService.sync(context)
         window?.window?.let { w ->
             WindowCompat.setDecorFitsSystemWindows(w, false)
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)

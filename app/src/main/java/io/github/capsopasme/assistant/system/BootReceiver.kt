@@ -20,6 +20,8 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         val app = context.applicationContext
+        // boot is one of the moments a foreground service may be started from the background
+        KeepAliveService.sync(app)
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

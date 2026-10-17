@@ -24,7 +24,9 @@ import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.llm.Provider
 import io.github.capsopasme.assistant.panel.PanelActivity
 import io.github.capsopasme.assistant.system.AssistantSetup
+import io.github.capsopasme.assistant.system.Diagnostics
 import io.github.capsopasme.assistant.system.ImeSwitcher
+import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.system.RootShell
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
@@ -74,6 +76,11 @@ class SettingsFragment : PreferenceFragmentCompat() {
         click("autostart") { openFirst(*AssistantSetup.autostartIntents(requireContext()).toTypedArray()) }
         click("open_panel") { startActivity(Intent(requireContext(), PanelActivity::class.java)) }
         click("test_model") { testModel() }
+        click("diagnostics") { showDiagnostics() }
+        findPreference<Preference>(Prefs.KEY_KEEP_ALIVE)?.setOnPreferenceChangeListener { _, _ ->
+            view?.post { KeepAliveService.sync(requireContext()) }
+            true
+        }
 
         findPreference<Preference>("version")?.summary = BuildConfig.VERSION_NAME
         findPreference<EditTextPreference>(Prefs.KEY_ALIASES)?.apply {
@@ -92,6 +99,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     override fun onResume() {
         super.onResume()
+        KeepAliveService.sync(requireContext())
         fillVoiceImes()
         refreshStatus()
     }
@@ -266,6 +274,25 @@ class SettingsFragment : PreferenceFragmentCompat() {
             pref?.summary = if (ok) "✓ 已配置，长按电源键试试" else "部分步骤失败，详见结果"
             message(if (ok) "配置完成" else "配置结果", report + if (ok) "\n\n长按电源键即可唤起助手。若没反应，重启一次手机后再试。" else "")
             refreshStatus()
+        }
+    }
+
+    private fun showDiagnostics() {
+        val pref = findPreference<Preference>("diagnostics")
+        pref?.summary = "正在收集…"
+        viewLifecycleOwner.lifecycleScope.launch {
+            val text = Diagnostics.collect(requireContext().applicationContext)
+            pref?.summary = "长按电源键没反应后，回到这里点一下，把结果复制给开发者"
+            if (!isAdded) return@launch
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle("诊断信息")
+                .setMessage(text)
+                .setPositiveButton("复制") { _, _ ->
+                    val cm = requireContext().getSystemService(android.content.ClipboardManager::class.java)
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("助手诊断", text))
+                }
+                .setNegativeButton("关闭", null)
+                .show()
         }
     }
 

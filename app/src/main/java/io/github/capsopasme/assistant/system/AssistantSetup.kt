@@ -98,6 +98,8 @@ object AssistantSetup {
             "允许锁屏显示" to "appops set $pkg $OP_SHOW_WHEN_LOCKED allow",
             // the AOSP exemption from background-start limits; harmless if HyperOS ignores it
             "允许显示在其他应用上层" to "appops set $pkg SYSTEM_ALERT_WINDOW allow",
+            // keep HyperOS' battery saver from freezing / restricting the assistant in the background
+            "省电策略豁免" to "dumpsys deviceidle whitelist +$pkg >/dev/null; cmd appops set $pkg RUN_ANY_IN_BACKGROUND allow; cmd appops set $pkg RUN_IN_BACKGROUND allow; am set-standby-bucket $pkg active; true",
             // HyperOS' "自启动" (10008) and boot broadcast (10007): let the boot receiver re-apply this
             "允许自启动" to "appops set $pkg 10008 allow 2>/dev/null; appops set $pkg 10007 allow 2>/dev/null; true",
         )

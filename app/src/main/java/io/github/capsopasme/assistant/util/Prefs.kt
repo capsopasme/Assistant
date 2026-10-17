@@ -33,6 +33,7 @@ class Prefs(context: Context) {
     val mapApp: String get() = sp.getString(KEY_MAP_APP, MAP_COMAPS) ?: MAP_COMAPS
     val aliases: String get() = sp.getString(KEY_ALIASES, "") ?: ""
     val keepAssistant get() = sp.getBoolean(KEY_KEEP_ASSISTANT, true)
+    val keepAlive get() = sp.getBoolean(KEY_KEEP_ALIVE, true)
 
     companion object {
         const val KEY_PROVIDER = "provider"
@@ -42,6 +43,7 @@ class Prefs(context: Context) {
         const val KEY_MAP_APP = "map_app"
         const val KEY_ALIASES = "app_aliases"
         const val KEY_KEEP_ASSISTANT = "keep_assistant"
+        const val KEY_KEEP_ALIVE = "keep_alive"
 
         // internal state, not shown in settings
         const val KEY_IME_RESTORE = "state_ime_restore"

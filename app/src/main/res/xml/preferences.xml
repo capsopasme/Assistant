@@ -34,6 +34,12 @@
         <SwitchPreferenceCompat
             app:defaultValue="true"
             app:iconSpaceReserved="false"
+            app:key="keep_alive"
+            app:summary="防止系统冻结助手的进程（冻结后长按电源键会没反应）。不耗电：不占 CPU、不持唤醒锁，也不显示通知"
+            app:title="保持随时可唤起" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:iconSpaceReserved="false"
             app:key="keep_assistant"
             app:summary="HyperOS 重启后会把助理改回小爱，开启后自动改回来"
             app:title="开机后自动恢复" />
@@ -42,6 +48,11 @@
             app:key="autostart"
             app:summary="一键配置会尝试允许自启动；如果开机恢复不生效，请在这里手动允许"
             app:title="自启动权限" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="diagnostics"
+            app:summary="长按电源键没反应后，回到这里点一下，把结果复制给开发者"
+            app:title="诊断信息" />
         <Preference
             app:iconSpaceReserved="false"
             app:key="open_panel"
