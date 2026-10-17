@@ -115,13 +115,20 @@
             </intent-filter>
         </activity>
 
-        <!-- digital assistant: isolated, tiny process kept bound by the system -->
+        <!-- asks for runtime permissions on behalf of the assistant window -->
+        <activity
+            android:name=".panel.PermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity="io.github.capsopasme.assistant.permission"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- digital assistant, kept bound by the system; the panel is drawn in its session window -->
         <service
             android:name=".vis.AssistVoiceService"
             android:exported="true"
             android:label="@string/vis_label"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:process=":vis">
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
             <meta-data
                 android:name="android.voice_interaction"
                 android:resource="@xml/voice_interaction_service" />
@@ -133,14 +140,12 @@
         <service
             android:name=".vis.AssistSessionService"
             android:exported="true"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:process=":vis" />
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
         <service
             android:name=".vis.StubRecognitionService"
             android:exported="true"
-            android:label="@string/recognizer_label"
-            android:process=":vis">
+            android:label="@string/recognizer_label">
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
                 <category android:name="android.intent.category.DEFAULT" />

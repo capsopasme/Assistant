@@ -253,9 +253,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
         val panel = Marks.read(ctx, Marks.PANEL)
         return when {
-            Marks.read(ctx, Marks.BLOCKED) == show -> "$agoText：收到了，但面板被系统拦截（后台弹出界面）"
             panel >= show -> "$agoText：正常打开了面板"
-            else -> "$agoText：收到了，面板没有打开"
+            else -> "$agoText：收到了，但面板没有显示出来"
         }
     }
 

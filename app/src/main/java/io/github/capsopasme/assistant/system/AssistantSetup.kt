@@ -90,9 +90,10 @@ object AssistantSetup {
             "关闭读屏与截屏" to "settings put secure assist_structure_enabled 0; settings put secure assist_screenshot_enabled 0; true",
             "授予切换输入法权限" to "pm grant $pkg ${Manifest.permission.WRITE_SECURE_SETTINGS}",
             "授予修改系统设置" to "appops set $pkg WRITE_SETTINGS allow",
+            // the assistant window can't show permission dialogs nicely: grant what calls need up front
+            "授予通讯录和拨号权限" to "pm grant $pkg ${Manifest.permission.READ_CONTACTS} && pm grant $pkg ${Manifest.permission.CALL_PHONE}",
             // HyperOS blocks activity starts from the background per app ("后台弹出界面", MIUI
-            // app-op 10021) even for the assistant: without it the power key only works while
-            // this app is already in front
+            // app-op 10021): needed to open other apps from the panel
             "允许后台弹出界面" to "appops set $pkg $OP_BACKGROUND_START_ACTIVITY allow",
             "允许锁屏显示" to "appops set $pkg $OP_SHOW_WHEN_LOCKED allow",
             // the AOSP exemption from background-start limits; harmless if HyperOS ignores it
