@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="状态" app:iconSpaceReserved="false">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="status_assistant"
+            app:title="默认数字助理" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="status_power"
+            app:title="长按电源键" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="status_root"
+            app:title="Root 权限" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="status_voice"
+            app:title="语音输入" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="setup_apply"
+            app:summary="设为默认数字助理、长按电源键唤起助手、授予切换输入法和调节亮度的权限"
+            app:title="一键配置（需要 root）" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:iconSpaceReserved="false"
+            app:key="keep_assistant"
+            app:summary="HyperOS 重启后会把助理改回小爱，开启后自动改回来"
+            app:title="开机后自动恢复" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="autostart"
+            app:summary="一键配置会尝试允许自启动；如果开机恢复不生效，请在这里手动允许"
+            app:title="自启动权限" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="open_panel"
+            app:summary="不用电源键，直接打开面板试一试"
+            app:title="打开助手" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="大模型" app:iconSpaceReserved="false">
+        <ListPreference
+            app:defaultValue="deepseek"
+            app:entries="@array/provider_labels"
+            app:entryValues="@array/provider_values"
+            app:iconSpaceReserved="false"
+            app:key="provider"
+            app:title="使用的服务"
+            app:useSimpleSummaryProvider="true" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="test_model"
+            app:summary="用当前服务和模型发一条测试消息"
+            app:title="测试连接" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_deepseek" app:title="DeepSeek" app:iconSpaceReserved="false">
+        <EditTextPreference app:iconSpaceReserved="false" app:key="key_deepseek" app:title="API Key" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="model_deepseek" app:title="模型" />
+        <Preference app:iconSpaceReserved="false" app:key="pick_deepseek" app:title="从服务器的模型列表选择" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="url_deepseek" app:title="接口地址（可选）" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_glm" app:title="智谱 GLM" app:iconSpaceReserved="false">
+        <EditTextPreference app:iconSpaceReserved="false" app:key="key_glm" app:title="API Key" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="model_glm" app:title="模型" />
+        <Preference app:iconSpaceReserved="false" app:key="pick_glm" app:title="从服务器的模型列表选择" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="url_glm" app:title="接口地址（可选）" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_gemini" app:title="Gemini" app:iconSpaceReserved="false">
+        <EditTextPreference app:iconSpaceReserved="false" app:key="key_gemini" app:title="API Key" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="model_gemini" app:title="模型" />
+        <Preference app:iconSpaceReserved="false" app:key="pick_gemini" app:title="从服务器的模型列表选择" />
+        <EditTextPreference app:iconSpaceReserved="false" app:key="url_gemini" app:title="接口地址（可选）" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="语音" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:iconSpaceReserved="false"
+            app:key="auto_voice"
+            app:summary="打开助手时自动切到语音输入法开始听，关闭助手时切回原来的键盘"
+            app:title="唤起后直接语音输入" />
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:dependency="auto_voice"
+            app:iconSpaceReserved="false"
+            app:key="auto_send"
+            app:summary="语音整句上屏后约 1 秒自动发送"
+            app:title="说完自动发送" />
+        <ListPreference
+            app:iconSpaceReserved="false"
+            app:key="voice_ime"
+            app:title="语音输入法" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="应用" app:iconSpaceReserved="false">
+        <ListPreference
+            app:defaultValue="comaps"
+            app:entries="@array/map_labels"
+            app:entryValues="@array/map_values"
+            app:iconSpaceReserved="false"
+            app:key="map_app"
+            app:title="导航用的地图"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:dialogMessage="每行一个，格式：叫法=包名 或 叫法=应用名。例如：\n书架=com.anxcye.anx_reader\n刷视频=PiliPlus"
+            app:iconSpaceReserved="false"
+            app:key="app_aliases"
+            app:title="应用别名" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="关于" app:iconSpaceReserved="false">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="version"
+            app:title="版本" />
+    </PreferenceCategory>
+</PreferenceScreen>

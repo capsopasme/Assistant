@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Assistant" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar" />
+
+    <style name="Theme.Assistant.Settings">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Assistant.Panel">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.32</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:windowAnimationStyle">@style/PanelAnimation</item>
+    </style>
+
+    <style name="PanelAnimation" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/panel_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/none</item>
+        <item name="android:activityCloseEnterAnimation">@anim/none</item>
+        <item name="android:activityCloseExitAnimation">@anim/panel_exit</item>
+        <item name="android:taskOpenEnterAnimation">@anim/panel_enter</item>
+        <item name="android:taskCloseExitAnimation">@anim/panel_exit</item>
+        <item name="android:windowEnterAnimation">@anim/panel_enter</item>
+        <item name="android:windowExitAnimation">@anim/panel_exit</item>
+    </style>
+</resources>

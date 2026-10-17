@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">助手</string>
+    <string name="vis_label">助手</string>
+    <string name="recognizer_label">助手（占位识别服务）</string>
+</resources>
