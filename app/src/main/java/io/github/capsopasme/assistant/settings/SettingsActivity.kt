@@ -25,12 +25,12 @@ import io.github.capsopasme.assistant.llm.Provider
 import io.github.capsopasme.assistant.panel.PanelActivity
 import io.github.capsopasme.assistant.system.AssistantSetup
 import io.github.capsopasme.assistant.system.Diagnostics
-import io.github.capsopasme.assistant.system.ImeSwitcher
 import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.system.RootShell
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.util.SecretDataStore
+import io.github.capsopasme.assistant.voice.VoiceInput
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -70,13 +70,16 @@ class SettingsFragment : PreferenceFragmentCompat() {
         click("status_root") { refreshStatus() }
         click("status_bgstart") { applySetup() }
         click("status_last") { refreshStatus() }
-        click("status_voice") {
-            openFirst(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
+        click("status_voice") { applySetup() }
         click("autostart") { openFirst(*AssistantSetup.autostartIntents(requireContext()).toTypedArray()) }
         click("open_panel") { startActivity(Intent(requireContext(), PanelActivity::class.java)) }
         click("test_model") { testModel() }
         click("diagnostics") { showDiagnostics() }
+        findPreference<Preference>(Prefs.KEY_VOICE_RESIDENT)?.setOnPreferenceChangeListener { _, value ->
+            // takes effect where the binding is held: the keep-alive service
+            VoiceInput.setResident(requireContext(), value == true && prefs.keepAlive)
+            true
+        }
         findPreference<Preference>(Prefs.KEY_KEEP_ALIVE)?.setOnPreferenceChangeListener { _, _ ->
             view?.post { KeepAliveService.sync(requireContext()) }
             true
@@ -100,7 +103,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         KeepAliveService.sync(requireContext())
-        fillVoiceImes()
         refreshStatus()
     }
 
@@ -202,30 +204,17 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
-    private fun fillVoiceImes() {
-        val list = findPreference<ListPreference>(Prefs.KEY_VOICE_IME) ?: return
-        val imm = requireContext().getSystemService(InputMethodManager::class.java)
-        val pm = requireContext().packageManager
-        val imes = runCatching { imm.enabledInputMethodList }.getOrDefault(emptyList())
-        list.entries = imes.map<_, CharSequence> { it.loadLabel(pm).toString() }.toTypedArray()
-        list.entryValues = imes.map<_, CharSequence> { it.id }.toTypedArray()
-        val effective = ImeSwitcher(requireContext()).voiceIme()
-        list.summary = imes.firstOrNull { it.id == effective }?.loadLabel(pm)?.toString()
-            ?: "未找到已启用的「离线语音输入」，可在这里选择其他语音输入法"
-        list.setOnPreferenceChangeListener { _, _ -> view?.post { fillVoiceImes(); refreshStatus() }; true }
-    }
-
     private fun refreshStatus() {
         val ctx = context ?: return
         refreshJob?.cancel()
         val s0 = AssistantSetup.status(ctx)
         findPreference<Preference>("status_assistant")?.summary =
             if (s0.roleHeld) "✓ 已是默认数字助理" else "✗ 还不是（点一键配置，或点这里手动选择「助手」）"
-        val voice = ImeSwitcher(ctx)
-        findPreference<Preference>("status_voice")?.summary = when {
-            voice.voiceIme() != null -> "✓ 离线语音输入已启用" + if (AssistantSetup.hasWriteSecure(ctx)) "，可免 root 切换" else "（切换需要 root）"
-            voice.audioInputInstalled() -> "✗ 离线语音输入未启用（点这里到系统输入法设置启用）"
-            else -> "✗ 没有安装离线语音输入（Audio Input）"
+        findPreference<Preference>("status_voice")?.summary = when (VoiceInput.availability(ctx)) {
+            VoiceInput.Availability.OK ->
+                if (VoiceInput.hasMicPermission(ctx)) "✓ 使用「离线语音输入」的识别，不弹键盘" else "✗ 缺少麦克风权限（点一键配置授予）"
+            VoiceInput.Availability.TOO_OLD -> "✗ 「离线语音输入」版本太旧，请更新到最新版"
+            VoiceInput.Availability.NOT_INSTALLED -> "✗ 没有安装「离线语音输入」（Audio Input），只能打字"
         }
         findPreference<Preference>("status_last")?.summary = lastPressSummary(ctx)
         findPreference<Preference>("status_root")?.summary = "检查中…"

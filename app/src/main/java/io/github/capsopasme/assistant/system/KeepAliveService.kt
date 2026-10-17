@@ -13,6 +13,7 @@ import android.util.Log
 import io.github.capsopasme.assistant.R
 import io.github.capsopasme.assistant.settings.SettingsActivity
 import io.github.capsopasme.assistant.util.Prefs
+import io.github.capsopasme.assistant.voice.VoiceInput
 
 /**
  * Keeps the assistant's process out of the freezer.
@@ -27,6 +28,32 @@ import io.github.capsopasme.assistant.util.Prefs
 class KeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        // keep Audio Input's recognizer (and its loaded model) bound while we are alive
+        VoiceInput.setResident(this, Prefs.get(this).voiceResident)
+    }
+
+    override fun onDestroy() {
+        instance = null
+        VoiceInput.setResident(this, false)
+        super.onDestroy()
+    }
+
+    /** While dictating, the foreground service also covers the microphone. */
+    private fun updateTypes(microphone: Boolean) {
+        val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+            (if (microphone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+        try {
+            startForeground(NOTIFICATION_ID, notification(), types)
+        } catch (e: Exception) {
+            // not allowed right now (e.g. no visible window): recording still works while the
+            // assistant window is showing
+            Log.w(TAG, "foreground type change refused: ${e.message}")
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // startForeground first in every case: a service started with startForegroundService()
@@ -76,6 +103,13 @@ class KeepAliveService : Service() {
         private const val TAG = "KeepAliveService"
         private const val CHANNEL = "keep_alive"
         private const val NOTIFICATION_ID = 1
+
+        @Volatile private var instance: KeepAliveService? = null
+
+        /** Adds / removes the microphone type while the assistant is listening. Main thread. */
+        fun setMicrophone(on: Boolean) {
+            instance?.updateTypes(on)
+        }
 
         /** Starts or stops the service to match the setting. Safe to call from anywhere. */
         fun sync(context: Context) {

@@ -88,7 +88,7 @@ object AssistantSetup {
             "长按电源键唤起助理" to "settings put system long_press_power_key $POWER_KEY_ASSISTANT && settings put global power_button_long_press 0",
             // the assistant never looks at the screen: no screenshot / view-tree capture on every launch
             "关闭读屏与截屏" to "settings put secure assist_structure_enabled 0; settings put secure assist_screenshot_enabled 0; true",
-            "授予切换输入法权限" to "pm grant $pkg ${Manifest.permission.WRITE_SECURE_SETTINGS}",
+            "授予麦克风权限" to "pm grant $pkg ${Manifest.permission.RECORD_AUDIO}",
             "授予修改系统设置" to "appops set $pkg WRITE_SETTINGS allow",
             // the assistant window can't show permission dialogs nicely: grant what calls need up front
             "授予通讯录和拨号权限" to "pm grant $pkg ${Manifest.permission.READ_CONTACTS} && pm grant $pkg ${Manifest.permission.CALL_PHONE}",
@@ -138,9 +138,6 @@ object AssistantSetup {
         if (r.code == -1) return null
         return Regex(":\\s*allow").containsMatchIn(r.out.lowercase())
     }
-
-    fun hasWriteSecure(context: Context) =
-        context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
 
     /** System page for picking the digital assistant (the manual route without root). */
     fun assistantSettingsIntent(): Intent =

@@ -29,7 +29,7 @@ class Prefs(context: Context) {
 
     val autoVoice get() = sp.getBoolean(KEY_AUTO_VOICE, true)
     val autoSend get() = sp.getBoolean(KEY_AUTO_SEND, true)
-    val voiceIme: String? get() = sp.getString(KEY_VOICE_IME, null)?.takeIf { it.isNotBlank() }
+    val voiceResident get() = sp.getBoolean(KEY_VOICE_RESIDENT, true)
     val mapApp: String get() = sp.getString(KEY_MAP_APP, MAP_COMAPS) ?: MAP_COMAPS
     val aliases: String get() = sp.getString(KEY_ALIASES, "") ?: ""
     val keepAssistant get() = sp.getBoolean(KEY_KEEP_ASSISTANT, true)
@@ -39,14 +39,11 @@ class Prefs(context: Context) {
         const val KEY_PROVIDER = "provider"
         const val KEY_AUTO_VOICE = "auto_voice"
         const val KEY_AUTO_SEND = "auto_send"
-        const val KEY_VOICE_IME = "voice_ime"
+        const val KEY_VOICE_RESIDENT = "voice_resident"
         const val KEY_MAP_APP = "map_app"
         const val KEY_ALIASES = "app_aliases"
         const val KEY_KEEP_ASSISTANT = "keep_assistant"
         const val KEY_KEEP_ALIVE = "keep_alive"
-
-        // internal state, not shown in settings
-        const val KEY_IME_RESTORE = "state_ime_restore"
 
         const val MAP_COMAPS = "comaps"
         const val MAP_AMAP = "amap"

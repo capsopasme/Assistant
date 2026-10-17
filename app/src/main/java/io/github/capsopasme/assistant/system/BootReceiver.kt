@@ -13,7 +13,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * HyperOS hands the assistant back to 小爱 on boot; re-apply our setup shortly after.
- * Also restores the keyboard if the panel died while voice input was switched on.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -29,7 +28,6 @@ class BootReceiver : BroadcastReceiver() {
                     // HyperOS' own assistant initialisation runs right after boot; go after it
                     if (action == Intent.ACTION_BOOT_COMPLETED) delay(8_000)
                     if (Prefs.get(app).keepAssistant) AssistantSetup.ensure(app)
-                    ImeSwitcher(app).let { if (it.hasPendingRestore()) it.restore() }
                 }
             } catch (e: Exception) {
                 Log.w("BootReceiver", "re-apply failed", e)

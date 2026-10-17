@@ -102,19 +102,20 @@
             app:defaultValue="true"
             app:iconSpaceReserved="false"
             app:key="auto_voice"
-            app:summary="打开助手时自动切到语音输入法开始听，关闭助手时切回原来的键盘"
-            app:title="唤起后直接语音输入" />
+            app:summary="打开助手就开始听，不弹键盘；点输入框可改为打字"
+            app:title="唤起后直接开始听" />
         <SwitchPreferenceCompat
             app:defaultValue="true"
-            app:dependency="auto_voice"
             app:iconSpaceReserved="false"
             app:key="auto_send"
-            app:summary="语音整句上屏后约 1 秒自动发送"
+            app:summary="一句话说完、停顿约 1 秒后自动发送"
             app:title="说完自动发送" />
-        <ListPreference
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
             app:iconSpaceReserved="false"
-            app:key="voice_ime"
-            app:title="语音输入法" />
+            app:key="voice_resident"
+            app:summary="识别模型一直留在内存里，每次说话不用重新加载：更快，也更省电（加载模型要跑几秒 CPU/NPU，常驻内存本身不耗电），代价是占用几百 MB 内存。需要开启「保持随时可唤起」"
+            app:title="语音模型常驻内存" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="应用" app:iconSpaceReserved="false">

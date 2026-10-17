@@ -119,7 +119,7 @@
                 android:layout_marginEnd="8dp"
                 android:layout_weight="1"
                 android:background="@drawable/input_background"
-                android:hint="说点什么，或输入指令"
+                android:hint="说话，或点这里打字"
                 android:imeOptions="actionSend|flagNoExtractUi"
                 android:importantForAutofill="no"
                 android:inputType="text|textMultiLine"

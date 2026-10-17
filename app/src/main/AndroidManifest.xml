@@ -9,13 +9,12 @@
     <!-- KeepAliveService: keeps the process from being frozen (no notification permission asked) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
-    <!-- granted through root by the one-tap setup; used to switch to / from the voice keyboard -->
-    <uses-permission
-        android:name="android.permission.WRITE_SECURE_SETTINGS"
-        tools:ignore="ProtectedPermissions" />
+    <!-- dictation: recorded here, recognized by Audio Input's offline recognizer -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- granted by the setup: exempts the panel from background-start limits -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- brightness / auto-rotate without root, if granted -->
@@ -32,9 +31,6 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
-        </intent>
-        <intent>
-            <action android:name="android.view.InputMethod" />
         </intent>
         <intent>
             <action android:name="android.speech.RecognitionService" />
@@ -161,7 +157,7 @@
         <service
             android:name=".system.KeepAliveService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|microphone">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the default digital assistant from being frozen so the power-key long press reaches it" />

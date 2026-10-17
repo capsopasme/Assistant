@@ -2,7 +2,14 @@ package io.github.capsopasme.assistant.panel
 
 import android.content.Context
 import android.content.Intent
+import android.Manifest
 import android.content.res.ColorStateList
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.text.Editable
@@ -36,10 +43,10 @@ import io.github.capsopasme.assistant.llm.Agent
 import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.parse.LocalParser
 import io.github.capsopasme.assistant.settings.SettingsActivity
-import io.github.capsopasme.assistant.system.ImeSwitcher
-import io.github.capsopasme.assistant.util.AppScope
+import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
+import io.github.capsopasme.assistant.voice.VoiceInput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,9 +65,10 @@ interface PanelHost {
 }
 
 /**
- * The assistant panel: a sheet at the bottom of the screen with a text field. Voice comes from the
- * Audio Input keyboard (switched to automatically, switched back on close). Local commands run
- * instantly; everything else goes to the selected model with the phone's tools.
+ * The assistant panel: a sheet at the bottom of the screen with a text field and a microphone
+ * button. Speech is recognized by Audio Input's offline recognizer ([VoiceInput]) with no keyboard
+ * on screen; tapping the text field brings up the normal keyboard for typing instead. Local
+ * commands run instantly; everything else goes to the selected model with the phone's tools.
  *
  * Normally shown in the assistant session's own window, which the system draws over any app (no
  * activity start, so no background-start restrictions); [PanelActivity] hosts it otherwise.
@@ -71,7 +79,6 @@ class PanelController(
     private val host: PanelHost,
 ) {
     private val prefs = Prefs.get(context)
-    private val ime = ImeSwitcher(context)
     private val executor = ActionExecutor(context, PermissionGate { host.requestPermissions(it) })
     private val agent = Agent(context, executor)
 
@@ -87,14 +94,22 @@ class PanelController(
     private var work: Job? = null
     private var autoSendJob: Job? = null
     private var autoCloseJob: Job? = null
-    private var startedVoice = false
+    private var startedInput = false
     private var suppressWatcher = false
     private var disposed = false
     private var maxScrollPx = Int.MAX_VALUE
 
+    /** text recognized in the current utterance, shown in the field with the live partial after it */
+    private var heard = ""
+    private var retained = true
+    private var lastRequestByVoice = false
+    private var keyboardMode = false
+    private var focusRequest: AudioFocusRequest? = null
+    private val partialColor by lazy { MaterialColors.getColor(input, com.google.android.material.R.attr.colorOnSurfaceVariant) }
+
     private val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
-        if (hasFocus && !startedVoice && !disposed) {
-            startedVoice = true
+        if (hasFocus && !startedInput && !disposed) {
+            startedInput = true
             beginInput()
         }
     }
@@ -110,6 +125,9 @@ class PanelController(
         }
         root.findViewById<View>(R.id.send).setOnClickListener { submit() }
         mic.setOnClickListener { toggleVoice() }
+        // tapping the text field means typing: stop listening, bring up the keyboard
+        input.showSoftInputOnFocus = false
+        input.setOnClickListener { if (!keyboardMode) switchToKeyboard() }
         input.setOnEditorActionListener { _, actionId, event ->
             val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
             if (actionId == EditorInfo.IME_ACTION_SEND || actionId == EditorInfo.IME_ACTION_DONE || enter) {
@@ -154,6 +172,11 @@ class PanelController(
 
         updateTitle()
         updateMicState()
+        // connect to the recognizer early, so the model is (or gets) loaded before anyone speaks
+        if (VoiceInput.availability(context) == VoiceInput.Availability.OK) {
+            VoiceInput.retain(context)
+            VoiceInput.preload()
+        } else retained = false
         // build the app list in the background so "打开…" is instant
         host.scope.launch(Dispatchers.Default) { runCatching { AppIndex.apps(context.applicationContext) } }
     }
@@ -166,10 +189,7 @@ class PanelController(
         card.translationY = dp(48).toFloat()
         card.alpha = 0f
         card.animate().translationY(0f).alpha(1f).setDuration(200).setInterpolator(DecelerateInterpolator(1.6f)).start()
-        if (startedVoice) {
-            input.requestFocus()
-            showKeyboard()
-        }
+        if (startedInput) beginInput()
     }
 
     /** Releases everything; the keyboard is switched back even though the panel is going away. */
@@ -180,31 +200,36 @@ class PanelController(
         autoSendJob?.cancel()
         autoCloseJob?.cancel()
         runCatching { root.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener) }
-        if (ime.hasPendingRestore()) {
-            val app = context.applicationContext
-            AppScope.launch { ImeSwitcher(app).restore() }
-        }
+        VoiceInput.cancel()
+        listeningEnded()
+        abandonAudioFocus()
+        // without a resident model, keep the recognizer around briefly for a quick follow-up
+        if (retained) VoiceInput.release(if (prefs.voiceResident) 0 else 60_000)
+        retained = false
     }
 
     /** After a permission dialog: back to typing. */
     fun refocus() {
         input.requestFocus()
-        showKeyboard()
+        if (keyboardMode) showKeyboard()
     }
 
     // --- input ----------------------------------------------------------------------------------
 
+    private fun voiceUsable() = VoiceInput.availability(context) == VoiceInput.Availability.OK
+
+    /** On open: listen right away (no keyboard), or show the keyboard. */
     private fun beginInput() {
         input.requestFocus()
-        if (prefs.autoVoice && ime.voiceIme() != null) {
-            host.scope.launch {
-                ime.toVoice()
-                updateMicState()
-                showKeyboard()
-            }
-        } else {
-            showKeyboard()
-        }
+        if (prefs.autoVoice && voiceUsable() && !keyboardMode) startListening() else switchToKeyboard()
+    }
+
+    private fun switchToKeyboard() {
+        if (VoiceInput.isListening) VoiceInput.stop()
+        keyboardMode = true
+        input.showSoftInputOnFocus = true
+        showKeyboard()
+        updateMicState()
     }
 
     private fun showKeyboard() {
@@ -216,39 +241,146 @@ class PanelController(
         }
     }
 
+    private fun hideKeyboard() {
+        ViewCompat.getWindowInsetsController(input)?.hide(WindowInsetsCompat.Type.ime())
+        context.getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(input.windowToken, 0)
+    }
+
     private fun toggleVoice() {
         autoCloseJob?.cancel()
-        if (ime.voiceIme() == null) {
-            val msg = if (ime.audioInputInstalled()) "请先在系统设置里启用「离线语音输入」输入法"
-            else "没有找到「离线语音输入」（Audio Input）"
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        if (VoiceInput.isListening) {
+            // done talking: the sentence in progress is still recognized
+            VoiceInput.stop()
             return
         }
+        when (VoiceInput.availability(context)) {
+            VoiceInput.Availability.NOT_INSTALLED -> {
+                Toast.makeText(context, "需要安装「离线语音输入」（Audio Input）", Toast.LENGTH_SHORT).show(); return
+            }
+            VoiceInput.Availability.TOO_OLD -> {
+                Toast.makeText(context, "请把「离线语音输入」更新到最新版", Toast.LENGTH_SHORT).show(); return
+            }
+            VoiceInput.Availability.OK -> {}
+        }
+        keyboardMode = false
+        input.showSoftInputOnFocus = false
+        hideKeyboard()
+        startListening()
+    }
+
+    private fun startListening() {
+        if (disposed || work?.isActive == true) return
         host.scope.launch {
-            val ok = if (ime.isVoiceActive()) ime.toKeyboard() else ime.toVoice()
-            if (!ok) Toast.makeText(context, "切换输入法失败：需要 root 或在设置里完成一键配置", Toast.LENGTH_SHORT).show()
-            updateMicState()
-            showKeyboard()
+            if (!VoiceInput.hasMicPermission(context) && !host.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO))) {
+                setStatus(null)
+                addBubble("没有麦克风权限，无法语音输入（可在助手里点一键配置授予）", error = true)
+                switchToKeyboard()
+                return@launch
+            }
+            if (disposed) return@launch
+            if (!retained) { VoiceInput.retain(context); retained = true }
+            heard = ""
+            requestAudioFocus()
+            KeepAliveService.setMicrophone(true)
+            setStatus("正在连接语音识别…")
+            val ok = VoiceInput.start(context, voiceListener, idleStopMs = IDLE_STOP_MS)
+            if (ok) updateMicState() else listeningEnded()
         }
     }
 
+    private val voiceListener = object : VoiceInput.Listener {
+        override fun onLoading() = setStatus("正在加载语音模型…")
+        override fun onListening() = setStatus("正在听…")
+
+        override fun onLevel(level: Float) {
+            val scale = 1f + 0.22f * level
+            mic.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+        }
+
+        override fun onPartial(text: String) {
+            autoSendJob?.cancel()
+            autoCloseJob?.cancel()
+            showHeard(text)
+        }
+
+        override fun onFinal(text: String) {
+            heard += text
+            showHeard("")
+            // a pause after a whole sentence: send it unless more speech follows
+            if (prefs.autoSend && !keyboardMode) {
+                autoSendJob?.cancel()
+                autoSendJob = host.scope.launch {
+                    delay(AUTO_SEND_DELAY_MS)
+                    submit()
+                }
+            }
+        }
+
+        override fun onDone(autoStopped: Boolean) {
+            listeningEnded()
+            setStatus(null)
+            if (prefs.autoSend && !keyboardMode && heard.isNotBlank() && work?.isActive != true) submit()
+            else if (autoStopped && input.text.isNullOrBlank() && messages.childCount == 0) host.close()
+        }
+
+        override fun onError(message: String) {
+            listeningEnded()
+            setStatus(null)
+            addBubble("语音识别：$message", error = true)
+        }
+    }
+
+    /** Recognized text plus the live partial (dimmed) in the field. */
+    private fun showHeard(partial: String) {
+        suppressWatcher = true
+        val sb = SpannableStringBuilder(heard)
+        if (partial.isNotEmpty()) {
+            val start = sb.length
+            sb.append(partial)
+            sb.setSpan(ForegroundColorSpan(partialColor), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        input.setText(sb)
+        input.setSelection(input.length())
+        suppressWatcher = false
+    }
+
+    private fun listeningEnded() {
+        mic.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+        KeepAliveService.setMicrophone(false)
+        updateMicState()
+    }
+
+    private fun requestAudioFocus() {
+        if (focusRequest != null) return
+        val am = context.getSystemService(AudioManager::class.java) ?: return
+        // music pauses while listening (better recognition) and resumes when the request is done
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+            )
+            .setOnAudioFocusChangeListener { }
+            .build()
+        if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusRequest = req
+    }
+
+    private fun abandonAudioFocus() {
+        val req = focusRequest ?: return
+        focusRequest = null
+        context.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(req)
+    }
+
     private fun updateMicState() {
-        val voice = ime.isVoiceActive()
-        mic.setImageResource(if (voice) R.drawable.ic_keyboard else R.drawable.ic_mic)
-        mic.contentDescription = if (voice) "切换到键盘" else "语音输入"
+        val listening = VoiceInput.isListening
+        mic.setImageResource(if (listening) R.drawable.ic_stop else R.drawable.ic_mic)
+        mic.contentDescription = if (listening) "停止听写" else "语音输入"
     }
 
     private fun onInputChanged() {
         if (suppressWatcher || disposed) return
+        // the user is typing / editing: don't close or send on their behalf
         autoCloseJob?.cancel()
         autoSendJob?.cancel()
-        val text = input.text?.toString().orEmpty()
-        if (text.isBlank() || work?.isActive == true || !prefs.autoSend || !ime.isVoiceActive()) return
-        // Audio Input commits a whole sentence after a pause; send once it stays unchanged a moment
-        autoSendJob = host.scope.launch {
-            delay(AUTO_SEND_DELAY_MS)
-            submit()
-        }
     }
 
     // --- requests -------------------------------------------------------------------------------
@@ -258,6 +390,10 @@ class PanelController(
         autoCloseJob?.cancel()
         val text = input.text?.toString()?.trim().orEmpty()
         if (text.isEmpty() || work?.isActive == true || disposed) return
+        lastRequestByVoice = VoiceInput.isListening || heard.isNotEmpty()
+        if (VoiceInput.isListening) VoiceInput.cancel()
+        listeningEnded()
+        heard = ""
         suppressWatcher = true
         input.setText("")
         suppressWatcher = false
@@ -266,6 +402,15 @@ class PanelController(
     }
 
     private suspend fun handle(text: String) {
+        try {
+            handleRequest(text)
+        } finally {
+            // after the action: a "暂停" sent while we held focus keeps the music paused
+            abandonAudioFocus()
+        }
+    }
+
+    private suspend fun handleRequest(text: String) {
         val now = Calendar.getInstance().let { it.get(Calendar.HOUR_OF_DAY) * 60 + it.get(Calendar.MINUTE) }
         val local = LocalParser.parse(text, now)
         if (local != null) {
@@ -317,7 +462,9 @@ class PanelController(
             leftApp && allOk -> host.close()
             // something was switched / set in place: show the result briefly, then get out of the way
             allOk && answer == null -> scheduleClose(1600)
-            else -> {} // an answer or a problem: stay for follow-ups
+            // an answer or a problem: stay, and listen for a follow-up if the request was spoken
+            // (the recognizer ends the session by itself after a few silent seconds)
+            else -> if (lastRequestByVoice && !keyboardMode && prefs.autoVoice) startListening()
         }
     }
 
@@ -394,6 +541,7 @@ class PanelController(
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val AUTO_SEND_DELAY_MS = 1100L
+        private const val AUTO_SEND_DELAY_MS = 900L
+        private const val IDLE_STOP_MS = 8_000
     }
 }
