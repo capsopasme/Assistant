@@ -26,6 +26,7 @@ import io.github.capsopasme.assistant.panel.PanelActivity
 import io.github.capsopasme.assistant.system.AssistantSetup
 import io.github.capsopasme.assistant.system.ImeSwitcher
 import io.github.capsopasme.assistant.system.RootShell
+import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.util.SecretDataStore
 import kotlinx.coroutines.Job
@@ -65,6 +66,8 @@ class SettingsFragment : PreferenceFragmentCompat() {
         click("status_assistant") { openFirst(AssistantSetup.assistantSettingsIntent(), AssistantSetup.manageDefaultAppsIntent()) }
         click("status_power") { applySetup() }
         click("status_root") { refreshStatus() }
+        click("status_bgstart") { applySetup() }
+        click("status_last") { refreshStatus() }
         click("status_voice") {
             openFirst(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
@@ -216,8 +219,10 @@ class SettingsFragment : PreferenceFragmentCompat() {
             voice.audioInputInstalled() -> "✗ 离线语音输入未启用（点这里到系统输入法设置启用）"
             else -> "✗ 没有安装离线语音输入（Audio Input）"
         }
+        findPreference<Preference>("status_last")?.summary = lastPressSummary(ctx)
         findPreference<Preference>("status_root")?.summary = "检查中…"
         findPreference<Preference>("status_power")?.summary = "检查中…"
+        findPreference<Preference>("status_bgstart")?.summary = "检查中…"
         refreshJob = viewLifecycleOwner.lifecycleScope.launch {
             val root = RootShell.available()
             findPreference<Preference>("status_root")?.summary =
@@ -227,6 +232,30 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 if (s.powerKeyOk) "✓ 长按电源键唤起助手" else "✗ 当前是「${s.powerKey ?: "未知"}」（点这里一键配置）"
             } else "需要 root 才能检查和设置"
             findPreference<Preference>("status_power")?.summary = power
+            findPreference<Preference>("status_bgstart")?.summary = when (AssistantSetup.backgroundStartAllowed(ctx)) {
+                true -> "✓ 已允许"
+                false -> "✗ 未允许：长按电源键只在助手界面里有效（点这里一键配置）"
+                null -> "需要 root 才能检查；也可在 应用管理 → 助手 → 其他权限 里手动允许"
+            }
+        }
+    }
+
+    /** What happened on the last power-key press, from the marks the two processes leave. */
+    private fun lastPressSummary(ctx: android.content.Context): String {
+        val show = Marks.read(ctx, Marks.SHOW)
+        if (show == 0L) return "还没有收到过（长按电源键后回来看这里）"
+        val ago = (System.currentTimeMillis() - show) / 1000
+        val agoText = when {
+            ago < 60 -> "$ago 秒前"
+            ago < 3600 -> "${ago / 60} 分钟前"
+            ago < 86400 -> "${ago / 3600} 小时前"
+            else -> "${ago / 86400} 天前"
+        }
+        val panel = Marks.read(ctx, Marks.PANEL)
+        return when {
+            Marks.read(ctx, Marks.BLOCKED) == show -> "$agoText：收到了，但面板被系统拦截（后台弹出界面）"
+            panel >= show -> "$agoText：正常打开了面板"
+            else -> "$agoText：收到了，面板没有打开"
         }
     }
 

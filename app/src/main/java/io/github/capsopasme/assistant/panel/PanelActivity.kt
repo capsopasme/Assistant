@@ -42,6 +42,7 @@ import io.github.capsopasme.assistant.parse.LocalParser
 import io.github.capsopasme.assistant.settings.SettingsActivity
 import io.github.capsopasme.assistant.system.ImeSwitcher
 import io.github.capsopasme.assistant.util.AppScope
+import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -105,6 +106,7 @@ class PanelActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Marks.write(this, Marks.PANEL) // tells the assistant session that the panel came up
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setShowWhenLocked(true)
         setContentView(R.layout.activity_panel)
@@ -186,6 +188,7 @@ class PanelActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        Marks.write(this, Marks.PANEL)
         // invoked again while open: start a fresh request
         autoCloseJob?.cancel()
         input.requestFocus()

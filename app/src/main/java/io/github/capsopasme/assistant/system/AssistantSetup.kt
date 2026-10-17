@@ -26,6 +26,8 @@ object AssistantSetup {
 
     private const val MIBRAIN_RECOGNIZER = "com.xiaomi.mibrain.speech/com.xiaomi.mibrain.speech.asr.AsrService"
     const val POWER_KEY_ASSISTANT = "launch_google_search"
+    private const val OP_SHOW_WHEN_LOCKED = 10020
+    private const val OP_BACKGROUND_START_ACTIVITY = 10021
 
     data class Status(
         val roleHeld: Boolean,
@@ -88,8 +90,15 @@ object AssistantSetup {
             "关闭读屏与截屏" to "settings put secure assist_structure_enabled 0; settings put secure assist_screenshot_enabled 0; true",
             "授予切换输入法权限" to "pm grant $pkg ${Manifest.permission.WRITE_SECURE_SETTINGS}",
             "授予修改系统设置" to "appops set $pkg WRITE_SETTINGS allow",
-            // HyperOS' own "自启动" switch (MIUI app-op 10008): lets the boot receiver re-apply this
-            "允许自启动" to "appops set $pkg 10008 allow 2>/dev/null; true",
+            // HyperOS blocks activity starts from the background per app ("后台弹出界面", MIUI
+            // app-op 10021) even for the assistant: without it the power key only works while
+            // this app is already in front
+            "允许后台弹出界面" to "appops set $pkg $OP_BACKGROUND_START_ACTIVITY allow",
+            "允许锁屏显示" to "appops set $pkg $OP_SHOW_WHEN_LOCKED allow",
+            // the AOSP exemption from background-start limits; harmless if HyperOS ignores it
+            "允许显示在其他应用上层" to "appops set $pkg SYSTEM_ALERT_WINDOW allow",
+            // HyperOS' "自启动" (10008) and boot broadcast (10007): let the boot receiver re-apply this
+            "允许自启动" to "appops set $pkg 10008 allow 2>/dev/null; appops set $pkg 10007 allow 2>/dev/null; true",
         )
         val report = StringBuilder()
         var allOk = true
@@ -114,9 +123,17 @@ object AssistantSetup {
     suspend fun ensure(context: Context) {
         val s = status(context)
         if (s.roleHeld && s.interactionService) {
-            if (!refreshHidden() || lastPowerKey == POWER_KEY_ASSISTANT) return
+            if (!refreshHidden()) return // no root: nothing we could fix anyway
+            if (lastPowerKey == POWER_KEY_ASSISTANT && backgroundStartAllowed(context) != false) return
         }
         apply(context)
+    }
+
+    /** HyperOS "后台弹出界面" for this app: true / false, null if it can't be read (no root). */
+    suspend fun backgroundStartAllowed(context: Context): Boolean? {
+        val r = RootShell.run("appops get ${context.packageName} $OP_BACKGROUND_START_ACTIVITY", 4_000)
+        if (r.code == -1) return null
+        return Regex(":\\s*allow").containsMatchIn(r.out.lowercase())
     }
 
     fun hasWriteSecure(context: Context) =

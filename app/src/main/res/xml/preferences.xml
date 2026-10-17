@@ -12,6 +12,14 @@
             app:title="长按电源键" />
         <Preference
             app:iconSpaceReserved="false"
+            app:key="status_bgstart"
+            app:title="后台弹出界面" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="status_last"
+            app:title="最近一次长按电源键" />
+        <Preference
+            app:iconSpaceReserved="false"
             app:key="status_root"
             app:title="Root 权限" />
         <Preference
@@ -21,7 +29,7 @@
         <Preference
             app:iconSpaceReserved="false"
             app:key="setup_apply"
-            app:summary="设为默认数字助理、长按电源键唤起助手、授予切换输入法和调节亮度的权限"
+            app:summary="设为默认数字助理、长按电源键唤起助手、允许后台弹出界面、授予切换输入法和调节亮度的权限"
             app:title="一键配置（需要 root）" />
         <SwitchPreferenceCompat
             app:defaultValue="true"
