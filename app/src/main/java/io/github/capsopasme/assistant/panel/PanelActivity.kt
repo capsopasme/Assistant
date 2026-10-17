@@ -80,6 +80,7 @@ class PanelActivity : AppCompatActivity() {
     private var autoCloseJob: Job? = null
     private var imeShownOnce = false
     private var requestingPermission = false
+    private var waitingForUnlock = false
     private var suppressWatcher = false
 
     private var permissionWaiter: CompletableDeferred<Boolean>? = null
@@ -171,8 +172,16 @@ class PanelActivity : AppCompatActivity() {
         // build the app list in the background so "打开…" is instant
         lifecycleScope.launch(Dispatchers.Default) { runCatching { AppIndex.apps(applicationContext) } }
 
+        // invoked on the lock screen: ask for the unlock first; give up if the user doesn't
         val km = getSystemService(KeyguardManager::class.java)
-        if (km?.isKeyguardLocked == true) km.requestDismissKeyguard(this, null)
+        if (km?.isKeyguardLocked == true) {
+            waitingForUnlock = true
+            km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { waitingForUnlock = false }
+                override fun onDismissCancelled() { waitingForUnlock = false; close(animate = false) }
+                override fun onDismissError() { waitingForUnlock = false; close(animate = false) }
+            })
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -207,9 +216,8 @@ class PanelActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
-        if (isChangingConfigurations || requestingPermission) return
-        val km = getSystemService(KeyguardManager::class.java)
-        if (km?.isKeyguardLocked == true && !isFinishing) return // the bouncer is showing over us
+        // the bouncer showing over us, or a permission dialog: not a reason to close
+        if (isChangingConfigurations || requestingPermission || waitingForUnlock) return
         close(animate = false)
     }
 
