@@ -367,7 +367,7 @@ class PanelActivity : AppCompatActivity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (user) 15f else 16f)
             setLineSpacing(0f, 1.15f)
             val color = when {
-                error -> MaterialColors.getColor(this, com.google.android.material.R.attr.colorError)
+                error -> MaterialColors.getColor(this, androidx.appcompat.R.attr.colorError)
                 user -> MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnPrimaryContainer)
                 else -> MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
             }
