@@ -49,6 +49,15 @@ object RootShell {
         return ok
     }
 
+    /**
+     * Starts the shell in the background when a root command is about to come (starting `su`
+     * takes a moment). Nothing if root is known to be missing; closes itself when idle as usual.
+     */
+    fun warmUp() {
+        if (lastAvailable == false) return
+        scope.launch { runCatching { available() } }
+    }
+
     /** Runs [cmd] (stderr merged into the output). code -1 = no root / shell died / timed out. */
     suspend fun run(cmd: String, timeoutMs: Long = 8_000): Result = withContext(Dispatchers.IO) {
         mutex.withLock {

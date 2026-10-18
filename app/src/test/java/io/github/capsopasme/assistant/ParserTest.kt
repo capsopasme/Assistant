@@ -116,6 +116,31 @@ class ParserTest {
         assertEquals(Action.OpenApp("蓝牙设置"), p("打开蓝牙设置"))
     }
 
+    @Test fun speechNoise() {
+        // fillers and punctuation the recognizer puts around a command
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p("嗯，打开蓝牙。"))
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p("嗯。打开蓝牙。"))
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p("呃，打开蓝牙，谢谢。"))
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p("打开蓝牙。谢谢"))
+        // two sentences are the model's job
+        assertNull(p("导航到北京。算了"))
+        assertNull(p("暂停。下一首"))
+        // a command split by a pause
+        val join = { a: String, b: String -> LocalParser.joinUtterances(a, b, noon) }
+        assertEquals("打开蓝牙。", join("打开。", "蓝牙。"))
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p(join("打开。", "蓝牙。")))
+        assertEquals(Action.Call("妈妈"), p(join("给妈妈。", "打电话。")))
+        assertEquals(Action.Switch(SwitchTarget.BLUETOOTH, true), p(join("嗯。", "打开蓝牙。")))
+        assertEquals("暂停。下一首。", join("暂停。", "下一首。"))
+        assertNull(p(join("暂停。", "下一首。")))
+        assertEquals("打开蓝牙", join("", "打开蓝牙"))
+        assertTrue(LocalParser.isFiller("嗯。"))
+        assertTrue(LocalParser.isFiller("呃，"))
+        assertTrue(LocalParser.isFiller("。"))
+        assertTrue(!LocalParser.isFiller("嗯，打开蓝牙"))
+        assertTrue(!LocalParser.isFiller("好"))
+    }
+
     @Test fun mediaAndMusic() {
         assertEquals(Action.Media(MediaCommand.PAUSE), p("暂停"))
         assertEquals(Action.Media(MediaCommand.NEXT), p("下一首"))

@@ -122,6 +122,12 @@ object AppIndex {
         "直播" to listOf("com.mystyle.purelive"),
     )
 
+    /** package → its built-in aliases with their pinyin, computed once (ICU transliteration isn't free) */
+    private val aliasForms: Map<String, List<Pair<String, String?>>> by lazy {
+        BUILTIN_ALIASES.entries.flatMap { (alias, pkgs) -> pkgs.map { it to alias } }
+            .groupBy({ it.first }, { it.second to Pinyin.of(it.second) })
+    }
+
     private var apps: List<App> = emptyList()
     private var sequence = 0
     private var built = false
@@ -165,12 +171,10 @@ object AppIndex {
         BUILTIN_ALIASES[query]?.firstNotNullOfOrNull { byPkg[it]?.firstOrNull() }?.let { return Found(it, emptyList()) }
 
         // 2) fuzzy over labels and over the aliases of installed apps
-        val aliasForms = BUILTIN_ALIASES.entries.flatMap { (alias, pkgs) -> pkgs.map { it to alias } }
-            .groupBy({ it.first }, { it.second })
         val ranked = Fuzzy.rank(spoken, Pinyin.of(query), all) { app ->
             buildList {
                 add(app.norm to app.pinyin)
-                aliasForms[app.pkg]?.forEach { a -> add(a to Pinyin.of(a)) }
+                aliasForms[app.pkg]?.let { addAll(it) }
             }
         }
         val best = ranked.firstOrNull()

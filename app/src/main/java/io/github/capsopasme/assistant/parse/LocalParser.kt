@@ -16,8 +16,8 @@ object LocalParser {
     fun parse(raw: String, nowMinutes: Int): Action? {
         val t = clean(raw)
         if (t.isEmpty() || t.length > 40) return null
-        // several commands in one sentence: the model sequences them
-        if (Regex("然后|并且|接着|同时|之后再|[，,；;]").containsMatchIn(t)) return null
+        // several commands or sentences in one request: the model sequences them
+        if (Regex("然后|并且|接着|同时|之后再|[，,；;。！？!?]").containsMatchIn(t)) return null
 
         return media(t)
             ?: shuffleAll(t)
@@ -33,22 +33,44 @@ object LocalParser {
             ?: openApp(t)
     }
 
+    /**
+     * Joins two sentences recognized one after the other. A pause in the middle of a command
+     * ("打开……蓝牙") makes the recognizer emit two sentences, the first one with a full stop; a short
+     * fragment that is no command by itself is joined to the next one without that stop.
+     */
+    fun joinUtterances(previous: String, next: String, nowMinutes: Int): String {
+        if (previous.isBlank()) return next
+        val fragment = clean(previous).length <= 4 && parse(previous, nowMinutes) == null
+        return if (fragment) previous.replace(TRAILING_STOP, "") + next else previous + next
+    }
+
+    private val TRAILING_STOP = Regex("[\\s。.！!？?，,、]+$")
+
+    private val FILLERS = setOf("嗯", "嗯嗯", "呃", "额", "啊", "哦", "噢", "喔", "唔", "哎", "诶", "欸", "嘿", "哈", "呵", "嗯哼")
+
+    /** A sentence that is only a hesitation sound or punctuation (breathing, "嗯。"): not a request. */
+    fun isFiller(text: String): Boolean {
+        val t = text.lowercase().replace(EDGE_PUNCT, "").replace(Regex("[\\s\\p{Punct}，。！？、：；~～“”‘’…]+"), "")
+        return t.isEmpty() || t in FILLERS
+    }
+
     // ---------------------------------------------------------------------------------------------
 
     private val LEADING = listOf(
         "麻烦你", "麻烦", "请你", "请", "帮我", "帮忙", "你帮我", "能不能", "可不可以", "可以", "你能",
-        "嗯", "那个", "小助手", "助手", "我想要", "我想", "我要", "给我",
+        "嗯嗯", "嗯", "呃", "额", "哎", "诶", "欸", "喂", "那个", "小助手", "助手", "我想要", "我想", "我要", "给我",
     )
+    private val EDGE_PUNCT = Regex("^[\\s\\p{Punct}，。！？、：；~～“”‘’…]+|[\\s\\p{Punct}，。！？、：；~～“”‘’…]+$")
     private val TRAILING = listOf("谢谢你", "谢谢", "好吗", "好不好", "可以吗", "行吗", "吗", "吧", "啊", "呀", "哦", "嘛", "呢", "了吧")
     private val AFTER_GEI_WO = Regex("^(打开|关闭|关掉|开|关|放|播放|设|定|来|调|导航|搜索|搜|启动|切换)")
 
     /** Strips punctuation and politeness so that rules only see the command itself. */
     fun clean(raw: String): String {
-        var t = raw.trim().lowercase()
-            .replace(Regex("^[\\s\\p{Punct}，。！？、：；~～“”‘’]+|[\\s\\p{Punct}，。！？、：；~～“”‘’]+$"), "")
-            .replace(Regex("\\s+"), "")
+        var t = raw.trim().lowercase().replace(Regex("\\s+"), "")
         var changed = true
         while (changed && t.isNotEmpty()) {
+            // again after every word taken off: "嗯，打开蓝牙" / "打开蓝牙。谢谢"
+            t = t.replace(EDGE_PUNCT, "")
             changed = false
             for (w in LEADING) {
                 if (t.startsWith(w) && t.length > w.length) {

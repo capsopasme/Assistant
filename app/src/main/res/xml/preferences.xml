@@ -108,8 +108,17 @@
             app:defaultValue="true"
             app:iconSpaceReserved="false"
             app:key="auto_send"
-            app:summary="一句话说完、停顿约 1 秒后自动发送"
+            app:summary="说完一句话、停顿一下就自动发送；「打开蓝牙」这类本机指令停顿 0.3 秒就发，接着说话会继续等"
             app:title="说完自动发送" />
+        <ListPreference
+            app:defaultValue="800"
+            app:dependency="auto_send"
+            app:entries="@array/send_wait_labels"
+            app:entryValues="@array/send_wait_values"
+            app:iconSpaceReserved="false"
+            app:key="send_wait_ms"
+            app:title="提问或复杂指令说完后等待"
+            app:useSimpleSummaryProvider="true" />
         <SwitchPreferenceCompat
             app:defaultValue="true"
             app:iconSpaceReserved="false"

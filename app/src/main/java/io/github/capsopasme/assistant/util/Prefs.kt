@@ -29,6 +29,8 @@ class Prefs(context: Context) {
 
     val autoVoice get() = sp.getBoolean(KEY_AUTO_VOICE, true)
     val autoSend get() = sp.getBoolean(KEY_AUTO_SEND, true)
+    /** quiet time after a sentence before it is sent (complete phone commands go sooner) */
+    val sendWaitMs: Long get() = sp.getString(KEY_SEND_WAIT, null)?.toLongOrNull()?.coerceIn(300, 3000) ?: 800L
     val voiceResident get() = sp.getBoolean(KEY_VOICE_RESIDENT, true)
     val mapApp: String get() = sp.getString(KEY_MAP_APP, MAP_COMAPS) ?: MAP_COMAPS
     val aliases: String get() = sp.getString(KEY_ALIASES, "") ?: ""
@@ -39,6 +41,7 @@ class Prefs(context: Context) {
         const val KEY_PROVIDER = "provider"
         const val KEY_AUTO_VOICE = "auto_voice"
         const val KEY_AUTO_SEND = "auto_send"
+        const val KEY_SEND_WAIT = "send_wait_ms"
         const val KEY_VOICE_RESIDENT = "voice_resident"
         const val KEY_MAP_APP = "map_app"
         const val KEY_ALIASES = "app_aliases"

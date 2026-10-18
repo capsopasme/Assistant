@@ -12,6 +12,7 @@ import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.SystemClock
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -35,15 +36,19 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.google.android.material.color.MaterialColors
 import io.github.capsopasme.assistant.R
+import io.github.capsopasme.assistant.action.Action
 import io.github.capsopasme.assistant.action.ActionExecutor
 import io.github.capsopasme.assistant.action.ActionResult
 import io.github.capsopasme.assistant.action.AppIndex
 import io.github.capsopasme.assistant.action.PermissionGate
+import io.github.capsopasme.assistant.action.SwitchTarget
 import io.github.capsopasme.assistant.llm.Agent
+import io.github.capsopasme.assistant.llm.LlmClient
 import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.parse.LocalParser
 import io.github.capsopasme.assistant.settings.SettingsActivity
 import io.github.capsopasme.assistant.system.KeepAliveService
+import io.github.capsopasme.assistant.system.RootShell
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.voice.VoiceInput
@@ -92,7 +97,6 @@ class PanelController(
     private val title: TextView = root.findViewById(R.id.title)
 
     private var work: Job? = null
-    private var autoSendJob: Job? = null
     private var autoCloseJob: Job? = null
     private var startedInput = false
     private var suppressWatcher = false
@@ -101,6 +105,13 @@ class PanelController(
 
     /** text recognized in the current utterance, shown in the field with the live partial after it */
     private var heard = ""
+
+    // auto-send bookkeeping (elapsedRealtime): send once the speaker has been quiet long enough
+    private var heardIsCommand = false
+    private var partialPending = false
+    private var lastFinalAt = 0L
+    private var lastPartialAt = 0L
+    private var lastLoudAt = 0L
     private var retained = true
     private var lastRequestByVoice = false
     private var keyboardMode = false
@@ -197,7 +208,6 @@ class PanelController(
         if (disposed) return
         disposed = true
         work?.cancel()
-        autoSendJob?.cancel()
         autoCloseJob?.cancel()
         runCatching { root.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener) }
         VoiceInput.cancel()
@@ -268,8 +278,9 @@ class PanelController(
         startListening()
     }
 
-    private fun startListening() {
-        if (disposed || work?.isActive == true) return
+    /** @param afterRequest called by the request itself as it finishes (its job is still active then) */
+    private fun startListening(afterRequest: Boolean = false) {
+        if (disposed || (!afterRequest && work?.isActive == true)) return
         host.scope.launch {
             if (!VoiceInput.hasMicPermission(context) && !host.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO))) {
                 setStatus(null)
@@ -280,11 +291,16 @@ class PanelController(
             if (disposed) return@launch
             if (!retained) { VoiceInput.retain(context); retained = true }
             heard = ""
+            heardIsCommand = false
+            partialPending = false
             requestAudioFocus()
             KeepAliveService.setMicrophone(true)
             setStatus("正在连接语音识别…")
             val ok = VoiceInput.start(context, voiceListener, idleStopMs = IDLE_STOP_MS)
-            if (ok) updateMicState() else listeningEnded()
+            if (ok) updateMicState() else {
+                listeningEnded()
+                abandonAudioFocus()
+            }
         }
     }
 
@@ -295,39 +311,91 @@ class PanelController(
         override fun onLevel(level: Float) {
             val scale = 1f + 0.22f * level
             mic.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+            if (level >= LOUD_LEVEL) lastLoudAt = SystemClock.elapsedRealtime()
+            // levels arrive ten times a second while recording: the auto-send clock, no timer needed
+            maybeAutoSend()
         }
 
         override fun onPartial(text: String) {
-            autoSendJob?.cancel()
             autoCloseJob?.cancel()
+            partialPending = true
+            lastPartialAt = SystemClock.elapsedRealtime()
             showHeard(text)
         }
 
         override fun onFinal(text: String) {
-            heard += text
+            partialPending = false
+            // breathing or a hesitation recognized as "嗯。": not part of the request
+            if (LocalParser.isFiller(text)) {
+                showHeard("")
+                return
+            }
+            heard = LocalParser.joinUtterances(heard, text, nowMinutes())
+            lastFinalAt = SystemClock.elapsedRealtime()
+            val local = LocalParser.parse(heard, nowMinutes())
+            heardIsCommand = local != null
             showHeard("")
-            // a pause after a whole sentence: send it unless more speech follows
+            // use the wait before sending: start what the request will need
             if (prefs.autoSend && !keyboardMode) {
-                autoSendJob?.cancel()
-                autoSendJob = host.scope.launch {
-                    delay(AUTO_SEND_DELAY_MS)
-                    submit()
+                when {
+                    local == null -> warmUpModel()
+                    needsRoot(local) -> RootShell.warmUp()
                 }
             }
+            maybeAutoSend()
         }
 
         override fun onDone(autoStopped: Boolean) {
             listeningEnded()
             setStatus(null)
-            if (prefs.autoSend && !keyboardMode && heard.isNotBlank() && work?.isActive != true) submit()
-            else if (autoStopped && input.text.isNullOrBlank() && messages.childCount == 0) host.close()
+            if (prefs.autoSend && !keyboardMode && heard.isNotBlank() && work?.isActive != true) {
+                submit()
+                return
+            }
+            // nothing will be sent: let the music play again
+            if (work?.isActive != true) abandonAudioFocus()
+            if (autoStopped && input.text.isNullOrBlank() && messages.childCount == 0) host.close()
         }
 
         override fun onError(message: String) {
             listeningEnded()
             setStatus(null)
+            if (work?.isActive != true) abandonAudioFocus()
             addBubble("语音识别：$message", error = true)
         }
+    }
+
+    /**
+     * Sends what was heard once the speaker has paused: briefly after a complete phone command,
+     * longer after anything else (a question tends to have a second half), and later still while
+     * the microphone hears speech that hasn't been recognized yet (talking on after a pause).
+     */
+    private fun maybeAutoSend() {
+        if (!prefs.autoSend || keyboardMode || disposed || heard.isBlank() || !VoiceInput.isListening ||
+            work?.isActive == true
+        ) return
+        val now = SystemClock.elapsedRealtime()
+        val wait = when {
+            // a sentence is being recognized; if its result never comes (nothing recognizable), go on
+            partialPending -> PARTIAL_STALE_MS
+            heardIsCommand -> COMMAND_SEND_DELAY_MS
+            else -> prefs.sendWaitMs
+        }
+        // loudness only holds the send back for a while: steady background noise must not block it
+        val loud = if (lastLoudAt > lastFinalAt && now - lastFinalAt < LOUD_HOLD_MAX_MS) lastLoudAt else 0L
+        val quietSince = maxOf(lastFinalAt, if (partialPending) lastPartialAt else 0L, loud)
+        if (now - quietSince >= wait) submit()
+    }
+
+    private fun nowMinutes() = Calendar.getInstance().let { it.get(Calendar.HOUR_OF_DAY) * 60 + it.get(Calendar.MINUTE) }
+
+    private fun needsRoot(a: Action) = (a is Action.Switch && a.target != SwitchTarget.FLASHLIGHT) || a is Action.Brightness
+
+    /** The request will go to the model: have the connection ready by the time it's sent. */
+    private fun warmUpModel() {
+        val p = prefs.provider
+        if (prefs.apiKey(p).isBlank() || !online()) return
+        LlmClient.warmUp(prefs.baseUrl(p))
     }
 
     /** Recognized text plus the live partial (dimmed) in the field. */
@@ -380,13 +448,12 @@ class PanelController(
         if (suppressWatcher || disposed) return
         // the user is typing / editing: don't close or send on their behalf
         autoCloseJob?.cancel()
-        autoSendJob?.cancel()
+        if (VoiceInput.isListening) switchToKeyboard()
     }
 
     // --- requests -------------------------------------------------------------------------------
 
     private fun submit() {
-        autoSendJob?.cancel()
         autoCloseJob?.cancel()
         val text = input.text?.toString()?.trim().orEmpty()
         if (text.isEmpty() || work?.isActive == true || disposed) return
@@ -402,41 +469,42 @@ class PanelController(
     }
 
     private suspend fun handle(text: String) {
+        var listenAgain = false
         try {
-            handleRequest(text)
+            listenAgain = handleRequest(text)
         } finally {
-            // after the action: a "暂停" sent while we held focus keeps the music paused
-            abandonAudioFocus()
+            // after the action: a "暂停" sent while we held focus keeps the music paused. When
+            // listening again right away, keep the focus instead of letting the music blip.
+            if (!listenAgain) abandonAudioFocus()
         }
+        // the request's job is still active here, so this skips the "busy" check
+        if (listenAgain && !disposed) startListening(afterRequest = true)
     }
 
-    private suspend fun handleRequest(text: String) {
-        val now = Calendar.getInstance().let { it.get(Calendar.HOUR_OF_DAY) * 60 + it.get(Calendar.MINUTE) }
-        val local = LocalParser.parse(text, now)
+    /** @return listen again for a follow-up */
+    private suspend fun handleRequest(text: String): Boolean {
+        val local = LocalParser.parse(text, nowMinutes())
         if (local != null) {
             setStatus("正在执行…")
             val result = executor.execute(local)
             setStatus(null)
-            if (!result.fallbackToModel) {
-                finishWith(listOf(result), null)
-                return
-            }
+            if (!result.fallbackToModel) return finishWith(listOf(result), null)
         }
-        askModel(text)
+        return askModel(text)
     }
 
-    private suspend fun askModel(text: String) {
+    private suspend fun askModel(text: String): Boolean {
         val provider = prefs.provider
         if (prefs.apiKey(provider).isBlank()) {
             addBubble("这句需要大模型来处理，但还没有填写 ${provider.label} 的 API Key。点右上角 ⚙ 去设置。", error = true)
-            return
+            return false
         }
         if (!online()) {
             addBubble("没有网络连接。", error = true)
-            return
+            return false
         }
         setStatus("思考中…")
-        try {
+        return try {
             val outcome = agent.run(text) { step -> root.post { setStatus("正在$step…") } }
             setStatus(null)
             finishWith(outcome.results, outcome.text)
@@ -445,27 +513,38 @@ class PanelController(
         } catch (e: LlmException) {
             setStatus(null)
             addBubble(e.message ?: "请求失败", error = true)
+            false
         } catch (e: Exception) {
             setStatus(null)
             addBubble("出错了：${e.message ?: e.javaClass.simpleName}", error = true)
+            false
         }
     }
 
-    /** Shows what happened and decides whether the panel stays open. */
-    private fun finishWith(results: List<ActionResult>, answer: String?) {
+    /**
+     * Shows what happened and decides whether the panel stays open.
+     * @return listen again: nothing was done on the phone (an answer, a question back, a failure)
+     * and the request was spoken
+     */
+    private fun finishWith(results: List<ActionResult>, answer: String?): Boolean {
         val leftApp = results.any { it.leftApp }
         val allOk = results.isNotEmpty() && results.all { it.ok }
+        // what was done (read back from the phone), then the model's words; after a failure the
+        // model's reply explains it, so the raw results are only shown when there is none
+        if (allOk || answer == null) {
+            for (r in results) addBubble(r.message, error = !r.ok)
+        }
         if (answer != null) addBubble(answer)
-        else for (r in results) addBubble(r.message, error = !r.ok)
         when {
             // another app is in front now: the panel's job is done
             leftApp && allOk -> host.close()
-            // something was switched / set in place: show the result briefly, then get out of the way
-            allOk && answer == null -> scheduleClose(1600)
+            // something was switched / set in place: show the result, then get out of the way
+            allOk -> scheduleClose(if (answer == null) 1600 else (2000L + 120L * answer.length).coerceAtMost(8000))
             // an answer or a problem: stay, and listen for a follow-up if the request was spoken
             // (the recognizer ends the session by itself after a few silent seconds)
-            else -> if (lastRequestByVoice && !keyboardMode && prefs.autoVoice) startListening()
+            else -> return lastRequestByVoice && !keyboardMode && prefs.autoVoice
         }
+        return false
     }
 
     private fun scheduleClose(ms: Long) {
@@ -541,7 +620,14 @@ class PanelController(
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val AUTO_SEND_DELAY_MS = 900L
         private const val IDLE_STOP_MS = 8_000
+        /** quiet time after a sentence that is a complete phone command (handled locally) */
+        private const val COMMAND_SEND_DELAY_MS = 300L
+        /** a sentence is being recognized but its result doesn't come: send what we have */
+        private const val PARTIAL_STALE_MS = 2_500L
+        /** microphone level (0..1, see VoiceInput) that counts as someone talking */
+        private const val LOUD_LEVEL = 0.25f
+        /** talking that isn't recognized as speech holds the send back at most this long */
+        private const val LOUD_HOLD_MAX_MS = 2_000L
     }
 }

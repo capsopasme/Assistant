@@ -33,18 +33,27 @@ class Agent(private val context: Context, private val executor: ActionExecutor) 
         val client = LlmClient(provider, prefs.apiKey(provider), prefs.model(provider), prefs.baseUrl(provider))
         History.expireIfStale()
         val messages = JSONArray().put(JSONObject().put("role", "system").put("content", systemPrompt()))
-        for (m in History.messages) messages.put(m)
-        val user = JSONObject().put("role", "user").put("content", userText)
-        messages.put(user)
-        History.add(user)
+        for (m in History.snapshot()) messages.put(m)
+        // This exchange goes into the history only once it is complete. A request cut short (the
+        // panel closed while a tool ran, a network error) would otherwise leave a tool call
+        // without its result behind, and every request of the next minutes would be refused (400).
+        val turn = ArrayList<JSONObject>()
+        fun add(m: JSONObject) {
+            messages.put(m)
+            turn += m
+        }
+        add(JSONObject().put("role", "user").put("content", userText))
 
         val results = mutableListOf<ActionResult>()
         repeat(MAX_ROUNDS) {
             val reply = client.chat(messages, Tools.specs)
-            messages.put(reply.message)
-            History.add(reply.message)
-            if (reply.toolCalls.isEmpty()) return Outcome(reply.text, results)
+            add(reply.message)
+            if (reply.toolCalls.isEmpty()) {
+                History.commit(turn)
+                return Outcome(reply.text, results)
+            }
 
+            val round = mutableListOf<ActionResult>()
             for (call in reply.toolCalls) {
                 val action = Tools.toAction(call)
                 val result = when (action) {
@@ -55,32 +64,43 @@ class Agent(private val context: Context, private val executor: ActionExecutor) 
                     }
                 }
                 results += result
+                round += result
                 val content = JSONObject().put("ok", result.ok).put("message", result.message)
                 if (result.candidates.isNotEmpty()) content.put("candidates", JSONArray(result.candidates))
-                val toolMsg = JSONObject().put("role", "tool").put("tool_call_id", call.id).put("content", content.toString())
-                messages.put(toolMsg)
-                History.add(toolMsg)
+                add(JSONObject().put("role", "tool").put("tool_call_id", call.id).put("content", content.toString()))
             }
-            // another app is on screen now: nobody will read a follow-up, don't wait for it
-            if (results.any { it.leftApp } && results.all { it.ok }) return Outcome(null, results)
+            // Everything worked: the results already say what happened (they are read back from
+            // the phone), so a second round trip would only rephrase them and cost a second or
+            // more. Only failures and ambiguities go back to the model.
+            if (round.all { it.ok && it.candidates.isEmpty() }) {
+                turn += JSONObject().put("role", "assistant").put("content", reply.text ?: round.joinToString("；") { it.message })
+                History.commit(turn)
+                // earlier failures were what this round retried
+                return Outcome(reply.text, results.filter { it.ok })
+            }
         }
+        turn += JSONObject().put("role", "assistant").put("content", results.joinToString("；") { it.message })
+        History.commit(turn)
         return Outcome(null, results)
     }
 
+    /** The time goes last: everything before it stays the same between requests (prompt cache). */
     private fun systemPrompt(): String {
         val now = Date()
         val date = SimpleDateFormat("yyyy年M月d日 EEEE HH:mm", Locale.CHINA).format(now)
         return """
 你是运行在用户手机（小米13，HyperOS 3，已 root）上的私人助手，用户通过文字或语音转文字向你下指令。
-现在是 $date。
 
 规则：
-- 凡是手机能做的操作（闹钟、倒计时、打电话、导航、打开应用、放音乐、系统开关、音量、亮度、网页搜索），必须调用工具去做，不要只回答“好的”。一句话里有多个操作就调用多个工具。
+- 凡是手机能做的操作（闹钟、倒计时、打电话、导航、打开应用、放音乐、系统开关、音量、亮度、网页搜索），必须调用工具去做，不要只回答“好的”。一句话里有多个操作就在同一次回复里一起调用多个工具。
+- 调用工具时 content 留空（执行结果会直接显示给用户）；只有用户同时还问了问题时，才在调用工具的同一次回复的 content 里直接回答那个问题。
 - 闹钟用 24 小时制；“明早七点”就是 7:00；相对时间（“二十分钟后”）用倒计时。
 - 工具返回失败或给出候选（candidates）时：能确定就重新调用一次，不能确定就简短地问用户。
 - 做不到的事（例如在微信里发消息、点外卖、读屏幕内容）直接说明做不到，不要假装完成。
 - 回答问题时用简体中文，简洁直接，一般不超过 150 字；不要用 Markdown 标题和表格。
 - 语音转写可能有同音错字，按最合理的意思理解。
+
+现在是 $date。
 """.trim()
     }
 
@@ -88,11 +108,14 @@ class Agent(private val context: Context, private val executor: ActionExecutor) 
     private object History {
         private const val MAX = 16
         private const val TTL_MS = 5 * 60_000L
-        val messages = ArrayList<JSONObject>()
+        private val messages = ArrayList<JSONObject>()
         private var lastUse = 0L
 
-        @Synchronized fun add(m: JSONObject) {
-            messages += m
+        @Synchronized fun snapshot(): List<JSONObject> = ArrayList(messages)
+
+        /** Adds one complete exchange (user message … final assistant message). */
+        @Synchronized fun commit(turn: List<JSONObject>) {
+            messages += turn
             lastUse = SystemClock.elapsedRealtime()
             // trim from the front, always restarting at a user message so tool replies keep their calls
             if (messages.size > MAX) {
@@ -105,9 +128,11 @@ class Agent(private val context: Context, private val executor: ActionExecutor) 
         @Synchronized fun expireIfStale() {
             if (SystemClock.elapsedRealtime() - lastUse > TTL_MS) messages.clear()
         }
+
+        @Synchronized fun clear() = messages.clear()
     }
 
-    fun clearHistory() = synchronized(History) { History.messages.clear() }
+    fun clearHistory() = History.clear()
 
     companion object {
         private const val MAX_ROUNDS = 4

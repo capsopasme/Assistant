@@ -151,12 +151,13 @@ class LlmClient(
                     }
                     val code = conn.responseCode
                     val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                    // read to the end and close: the connection goes back to the system's pool,
+                    // so the next request (a tool round, a follow-up) skips DNS + TCP + TLS
                     val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
                     if (cont.isActive) cont.resume(code to text)
                 } catch (e: Throwable) {
-                    if (cont.isActive) cont.resumeWithException(if (e is IOException) e else IOException(e))
-                } finally {
                     runCatching { conn.disconnect() }
+                    if (cont.isActive) cont.resumeWithException(if (e is IOException) e else IOException(e))
                 }
             }
         }
@@ -191,5 +192,36 @@ class LlmClient(
         /** provider/model pairs that refused the speed-up fields; kept for the process lifetime */
         private val extrasRejected = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         private val io = Executors.newCachedThreadPool { r -> Thread(r, "llm-http").apply { isDaemon = true } }
+
+        @Volatile private var lastWarmUp = 0L
+        @Volatile private var lastWarmUpHost: String? = null
+
+        /**
+         * Opens the connection to the service ahead of the request (a HEAD on the API's host, no
+         * key sent), while the user is still finishing the sentence: DNS, TCP and TLS take a few
+         * hundred ms, more on mobile data. The connection then waits in the system's pool.
+         * At most once every 30 s; an open pooled connection makes it nearly free anyway.
+         */
+        fun warmUp(baseUrl: String) {
+            val url = runCatching { URL(baseUrl) }.getOrNull() ?: return
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (url.host == lastWarmUpHost && now - lastWarmUp < 30_000) return
+            lastWarmUp = now
+            lastWarmUpHost = url.host
+            io.execute {
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = URL(url.protocol, url.host, url.port, "/").openConnection() as HttpURLConnection
+                    conn.connectTimeout = 5_000
+                    conn.readTimeout = 5_000
+                    conn.useCaches = false
+                    conn.requestMethod = "HEAD"
+                    conn.responseCode
+                    (conn.errorStream ?: runCatching { conn.inputStream }.getOrNull())?.close()
+                } catch (_: Exception) {
+                    runCatching { conn?.disconnect() }
+                }
+            }
+        }
     }
 }
