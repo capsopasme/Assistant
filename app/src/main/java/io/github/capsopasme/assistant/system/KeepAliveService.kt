@@ -8,12 +8,21 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.database.ContentObserver
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import io.github.capsopasme.assistant.R
 import io.github.capsopasme.assistant.settings.SettingsActivity
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.voice.VoiceInput
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Keeps the assistant's process out of the freezer.
@@ -24,20 +33,50 @@ import io.github.capsopasme.assistant.voice.VoiceInput
  * service is the documented way to stay unfrozen. It does no work at all: no wake lock, no timer,
  * no CPU while idle. Without the notification permission (never requested) its notification is
  * not shown; it only appears in the system's list of active apps.
+ *
+ * It also watches the two settings the power key depends on (voice_interaction_service and
+ * long_press_power_key). The system can clear the first one by itself, which unbinds the
+ * assistant service, so nothing else in the app would notice. A content observer costs nothing
+ * while idle: it only fires when the setting is written.
  */
 class KeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val recheck = Runnable {
+        if (!Prefs.get(this).keepAssistant) return@Runnable
+        scope.launch {
+            runCatching { AssistantSetup.ensure(applicationContext, "设置被改动") }
+                .onFailure { Log.w(TAG, "ensure failed", it) }
+        }
+    }
+    private val settingsObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+            // the system often writes several settings in a row: check once it has settled
+            handler.removeCallbacks(recheck)
+            handler.postDelayed(recheck, 3_000)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         // keep Audio Input's recognizer (and its loaded model) bound while we are alive
         VoiceInput.setResident(this, Prefs.get(this).voiceResident)
+        runCatching {
+            contentResolver.registerContentObserver(Settings.Secure.getUriFor("voice_interaction_service"), false, settingsObserver)
+            contentResolver.registerContentObserver(Settings.Secure.getUriFor("assistant"), false, settingsObserver)
+            contentResolver.registerContentObserver(Settings.System.getUriFor("long_press_power_key"), false, settingsObserver)
+        }.onFailure { Log.w(TAG, "could not watch the assistant settings: ${it.message}") }
     }
 
     override fun onDestroy() {
         instance = null
+        runCatching { contentResolver.unregisterContentObserver(settingsObserver) }
+        handler.removeCallbacks(recheck)
+        scope.cancel()
         VoiceInput.setResident(this, false)
         super.onDestroy()
     }

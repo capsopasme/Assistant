@@ -49,7 +49,7 @@ class AssistVoiceService : VoiceInteractionService() {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { s ->
                 s.launch {
                     delay(15_000) // let the boot settle first
-                    runCatching { AssistantSetup.ensure(applicationContext) }
+                    runCatching { AssistantSetup.ensure(applicationContext, "助理服务绑定") }
                         .onFailure { Log.w(TAG, "ensure failed", it) }
                 }
             }

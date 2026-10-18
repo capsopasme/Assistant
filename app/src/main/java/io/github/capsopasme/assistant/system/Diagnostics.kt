@@ -22,6 +22,8 @@ object Diagnostics {
         out.append("助手 ").append(BuildConfig.VERSION_NAME).append('\n')
         out.append("最近一次收到长按：").append(t(Marks.read(context, Marks.SHOW)))
             .append("；面板显示：").append(t(Marks.read(context, Marks.PANEL))).append('\n')
+        out.append("上次自动修复：").append(t(Marks.read(context, Marks.REPAIR)))
+            .append(' ').append(Marks.readText(context, Marks.REPAIR)).append('\n')
         out.append("现在：").append(fmt.format(Date())).append("\n\n")
 
         if (!RootShell.available()) {
@@ -48,7 +50,9 @@ object Diagnostics {
             dumpsys activity processes $pkg 2>/dev/null | grep -E "oom:|procState|frozen|isFreezeExempt|mFrozen" | head -8
             dumpsys activity services $pkg 2>/dev/null | grep -E "ServiceRecord|isForeground" | head -6
             echo "== 语音交互服务"
-            dumpsys voiceinteraction 2>/dev/null | grep -E -i "mComponent|mBound|mValid|mDisabledShowContext|mShown|ActiveSession|mSession|Interactor" | head -20
+            vi=${'$'}(dumpsys voiceinteraction 2>/dev/null)
+            echo "${'$'}vi" | grep -E -i "mComponent|mBound|mValid|mDisabledShowContext|mShown|ActiveSession|mSession|Interactor" | head -20
+            [ -z "${'$'}(echo "${'$'}vi" | grep -i mComponent)" ] && { echo "（没有绑定的语音交互服务）"; echo "${'$'}vi" | head -15; }
             echo "== 停用 / 卸载的小米系统应用"
             pm list packages -d 2>/dev/null | grep -i -E "miui|xiaomi|mi\.|voiceassist|mibrain|powerkeeper|securitycenter|millet" | sed 's/package://'
             pm list packages -u 2>/dev/null | sed 's/package://' | sort > /data/local/tmp/.assist_all
@@ -56,7 +60,7 @@ object Diagnostics {
             echo "-- 已卸载："; comm -23 /data/local/tmp/.assist_all /data/local/tmp/.assist_inst | grep -i -E "miui|xiaomi|voiceassist|mibrain|powerkeeper|securitycenter|millet|systemui|input"
             rm -f /data/local/tmp/.assist_all /data/local/tmp/.assist_inst
             echo "== 日志"
-            logcat -d -b main,system,events -t 4000 2>/dev/null | grep -i -E "VoiceInteract|capsopasme|assistant|launch_google|long_press|longPress|PowerKey|ShortCut|voiceassist|Greeze|Millet|freez" | grep -v -i "chatty" | tail -120
+            logcat -d -b main,system,events -t 4000 2>/dev/null | grep -i -E "VoiceInteract|AssistantSetup|capsopasme|assistant|launch_google|long_press|longPress|PowerKey|ShortCut|voiceassist|Greeze|Millet|freez" | grep -v -i "chatty" | tail -120
         """.trimIndent()
         val r = RootShell.run(script, 20_000)
         out.append(r.out.ifBlank { "（命令没有输出，code=${r.code}）" })

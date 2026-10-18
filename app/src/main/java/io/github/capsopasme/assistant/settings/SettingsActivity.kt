@@ -224,8 +224,18 @@ class SettingsFragment : PreferenceFragmentCompat() {
             val root = RootShell.available()
             findPreference<Preference>("status_root")?.summary =
                 if (root) "✓ 已授权" else "✗ 未授权：在 KernelSU 管理器里给「助手」开启超级用户（KernelSU 不会弹窗询问）"
+            // opening the app is a moment to put back what the system may have reset
+            // (voice_interaction_service cleared while the role stays: the press then does nothing)
+            if (root && Prefs.get(ctx).keepAssistant && AssistantSetup.ensure(ctx.applicationContext, "打开助手")) {
+                findPreference<Preference>("status_last")?.summary = lastPressSummary(ctx)
+            }
             val power = if (root && AssistantSetup.refreshHidden()) {
                 val s = AssistantSetup.status(ctx)
+                findPreference<Preference>("status_assistant")?.summary = when {
+                    !s.roleHeld -> "✗ 还不是（点一键配置，或点这里手动选择「助手」）"
+                    !s.interactionService -> "✗ 是默认助理，但系统没有绑定语音交互服务（点一键配置）"
+                    else -> "✓ 已是默认数字助理"
+                }
                 if (s.powerKeyOk) "✓ 长按电源键唤起助手" else "✗ 当前是「${s.powerKey ?: "未知"}」（点这里一键配置）"
             } else "需要 root 才能检查和设置"
             findPreference<Preference>("status_power")?.summary = power
@@ -249,10 +259,14 @@ class SettingsFragment : PreferenceFragmentCompat() {
             else -> "${ago / 86400} 天前"
         }
         val panel = Marks.read(ctx, Marks.PANEL)
-        return when {
+        val last = when {
             panel >= show -> "$agoText：正常打开了面板"
             else -> "$agoText：收到了，但面板没有显示出来"
         }
+        val repair = Marks.read(ctx, Marks.REPAIR)
+        if (repair == 0L) return last
+        val at = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(repair))
+        return "$last\n上次自动修复：$at（${Marks.readText(ctx, Marks.REPAIR)}）"
     }
 
     private fun applySetup() {

@@ -27,7 +27,7 @@ class BootReceiver : BroadcastReceiver() {
                 withTimeoutOrNull(25_000) {
                     // HyperOS' own assistant initialisation runs right after boot; go after it
                     if (action == Intent.ACTION_BOOT_COMPLETED) delay(8_000)
-                    if (Prefs.get(app).keepAssistant) AssistantSetup.ensure(app)
+                    if (Prefs.get(app).keepAssistant) AssistantSetup.ensure(app, if (action == Intent.ACTION_BOOT_COMPLETED) "开机" else "应用更新")
                 }
             } catch (e: Exception) {
                 Log.w("BootReceiver", "re-apply failed", e)

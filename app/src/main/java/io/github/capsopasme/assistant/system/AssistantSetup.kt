@@ -7,8 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import android.util.Log
+import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.vis.AssistVoiceService
 import io.github.capsopasme.assistant.vis.StubRecognitionService
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Makes this app the phone's digital assistant and routes the power-key long press to it.
@@ -20,7 +24,12 @@ import io.github.capsopasme.assistant.vis.StubRecognitionService
  *   speech recognizer isn't a working one, so the recognizer is pointed at Xiaomi's own engine
  *   (com.xiaomi.mibrain.speech) when it's installed;
  * - everything is re-applied after boot / app updates ([BootReceiver]) and checked whenever the
- *   assistant service is bound.
+ *   assistant service is bound;
+ * - the system can clear voice_interaction_service on its own while leaving the role and the
+ *   `assistant` setting in place (AOSP initForUser only auto-selects *system* assistants, and
+ *   小爱 is uninstalled, so it falls back to ""). SystemUI then tries to start our service as an
+ *   activity and the press does nothing. The service is unbound at that point, so it can't notice;
+ *   [KeepAliveService] watches the setting and the settings screen checks it on open.
  */
 object AssistantSetup {
 
@@ -47,8 +56,10 @@ object AssistantSetup {
         val role = runCatching {
             context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT)
         }.getOrDefault(false)
-        // hidden settings may be unreadable for apps on Android 12+: then the role decides
-        val visSetting = runCatching { Settings.Secure.getString(cr, "voice_interaction_service") }.getOrNull()
+        // the role alone says nothing about voice_interaction_service (it can be "" while the role
+        // is held): prefer the value read through root, then a direct read, and only then the role
+        val visSetting = lastVis
+            ?: runCatching { Settings.Secure.getString(cr, "voice_interaction_service") }.getOrNull()
         val visOk = if (visSetting == null) role else ComponentName.unflattenFromString(visSetting)?.packageName == context.packageName
         // long_press_power_key is a hidden system setting: apps targeting Android 12+ may not read
         // it directly, so it comes from the last root check
@@ -56,12 +67,25 @@ object AssistantSetup {
     }
 
     @Volatile private var lastPowerKey: String? = null
+    /** voice_interaction_service as last read through root; "" = cleared, null = not read yet. */
+    @Volatile private var lastVis: String? = null
 
     /** Reads the hidden settings through root (also refreshes [status]). */
     suspend fun refreshHidden(): Boolean {
-        val r = RootShell.run("settings get system long_press_power_key", 4_000)
-        if (r.ok) lastPowerKey = r.out.trim().lines().lastOrNull()?.trim()
-        return r.ok
+        val r = RootShell.run(
+            "echo \"P=\$(settings get system long_press_power_key)\"; echo \"V=\$(settings get secure voice_interaction_service)\"",
+            4_000,
+        )
+        if (!r.ok) return false
+        for (line in r.out.lines()) {
+            val v = line.trim()
+            when {
+                v.startsWith("P=") -> lastPowerKey = v.removePrefix("P=").trim()
+                // `settings get` prints "null" for a missing key: treat it like a cleared one
+                v.startsWith("V=") -> lastVis = v.removePrefix("V=").trim().takeUnless { it == "null" }.orEmpty()
+            }
+        }
+        return true
     }
 
     private fun recognizer(context: Context): String {
@@ -122,15 +146,42 @@ object AssistantSetup {
         return allOk to report.toString().trim()
     }
 
-    /** Re-applies silently when HyperOS has reset the assistant (after boot, or 小爱 taking over). */
-    suspend fun ensure(context: Context) {
-        val s = status(context)
-        if (s.roleHeld && s.interactionService) {
-            if (!refreshHidden()) return // no root: nothing we could fix anyway
-            if (lastPowerKey == POWER_KEY_ASSISTANT && backgroundStartAllowed(context) != false) return
-        }
-        apply(context)
+    private val ensureLock = Mutex()
+    private val recentRepairs = ArrayDeque<Long>()
+
+    /**
+     * Re-applies silently when the system has reset part of the setup (after boot, an update, or
+     * voice_interaction_service cleared). Returns true if a repair was made.
+     */
+    suspend fun ensure(context: Context, reason: String = ""): Boolean {
+        ensureLock.withLock { return ensureLocked(context, reason) }
     }
+
+    private suspend fun ensureLocked(context: Context, reason: String): Boolean {
+        if (!refreshHidden()) return false // no root: nothing we could fix anyway
+        val s = status(context)
+        if (s.allOk && backgroundStartAllowed(context) != false) return false
+        // never get into a tug-of-war with the system: at most 5 repairs in 10 minutes
+        val now = System.currentTimeMillis()
+        while (recentRepairs.isNotEmpty() && now - recentRepairs.first() > 600_000) recentRepairs.removeFirst()
+        if (recentRepairs.size >= 5) {
+            Log.w(TAG, "setup keeps getting reset, not repairing again for now")
+            return false
+        }
+        recentRepairs.addLast(now)
+        val what = buildList {
+            if (!s.roleHeld) add("角色")
+            if (!s.interactionService) add("语音交互服务=${lastVis?.ifEmpty { "空" } ?: "?"}")
+            if (!s.powerKeyOk) add("电源键=${s.powerKey}")
+        }.ifEmpty { listOf("后台弹出界面") }.joinToString("，")
+        Log.i(TAG, "repairing ($reason): $what")
+        Marks.write(context, Marks.REPAIR)
+        Marks.writeText(context, Marks.REPAIR, listOf(reason, what).filter { it.isNotEmpty() }.joinToString("："))
+        apply(context)
+        return true
+    }
+
+    private const val TAG = "AssistantSetup"
 
     /** HyperOS "后台弹出界面" for this app: true / false, null if it can't be read (no root). */
     suspend fun backgroundStartAllowed(context: Context): Boolean? {
