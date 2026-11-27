@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import io.github.capsopasme.assistant.charge.IconSetup
+import io.github.capsopasme.assistant.util.AppScope
 import io.github.capsopasme.assistant.util.Prefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,13 @@ class BootReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         // boot is one of the moments a foreground service may be started from the background
         KeepAliveService.sync(app)
+        if (action == Intent.ACTION_BOOT_COMPLETED) {
+            // keep ChgCtl's icon.conf current (the process stays: the keep-alive service holds it)
+            AppScope.launch(Dispatchers.IO) {
+                delay(40_000)
+                IconSetup.refreshIfSetUp(app, "开机")
+            }
+        }
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

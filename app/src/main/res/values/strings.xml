@@ -3,4 +3,7 @@
     <string name="app_name">助手</string>
     <string name="vis_label">助手</string>
     <string name="recognizer_label">助手（占位识别服务）</string>
+    <string name="tile_bypass">旁路供电</string>
+    <string name="charge_title">充电</string>
+    <string name="perm_chgctl_state">接收 ChgCtl 充电状态</string>
 </resources>

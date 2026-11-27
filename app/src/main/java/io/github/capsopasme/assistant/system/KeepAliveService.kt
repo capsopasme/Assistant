@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.database.ContentObserver
 import android.os.Handler
@@ -14,7 +16,10 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import io.github.capsopasme.assistant.R
+import io.github.capsopasme.assistant.charge.ChargeHints
+import io.github.capsopasme.assistant.charge.IconSetup
 import io.github.capsopasme.assistant.settings.SettingsActivity
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.voice.VoiceInput
@@ -22,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -60,9 +66,44 @@ class KeepAliveService : Service() {
         }
     }
 
+    /**
+     * Screen / power events for ChgCtl's "bypass while the screen is on" rule, and SystemUI
+     * updates (the bypass icon's resource id changes with them). Registered here, at runtime:
+     * these broadcasts can't reach a manifest receiver, and a registered receiver costs nothing
+     * while idle.
+     */
+    private val chargeEvents = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_SCREEN_OFF -> ChargeHints.onScreen(context)
+                Intent.ACTION_POWER_CONNECTED -> ChargeHints.onPower(context)
+                Intent.ACTION_PACKAGE_REPLACED -> if (intent.data?.schemeSpecificPart == "com.android.systemui") {
+                    scope.launch {
+                        delay(10_000) // let SystemUI come back up
+                        IconSetup.refreshIfSetUp(applicationContext, "系统界面更新")
+                    }
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
+        runCatching {
+            val flags = ContextCompat.RECEIVER_NOT_EXPORTED // system broadcasts still arrive
+            ContextCompat.registerReceiver(this, chargeEvents, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_POWER_CONNECTED)
+            }, flags)
+            ContextCompat.registerReceiver(
+                this, chargeEvents,
+                IntentFilter(Intent.ACTION_PACKAGE_REPLACED).apply { addDataScheme("package") }, flags,
+            )
+        }.onFailure { Log.w(TAG, "could not watch screen/power: ${it.message}") }
+        // learn ChgCtl's state (auto rule, plug state) so screen hints go out only when needed
+        ChargeHints.requestState()
         // keep Audio Input's recognizer (and its loaded model) bound while we are alive
         VoiceInput.setResident(this, Prefs.get(this).voiceResident)
         runCatching {
@@ -74,6 +115,7 @@ class KeepAliveService : Service() {
 
     override fun onDestroy() {
         instance = null
+        runCatching { unregisterReceiver(chargeEvents) }
         runCatching { contentResolver.unregisterContentObserver(settingsObserver) }
         handler.removeCallbacks(recheck)
         scope.cancel()

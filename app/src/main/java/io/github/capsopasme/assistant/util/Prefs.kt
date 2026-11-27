@@ -36,6 +36,10 @@ class Prefs(context: Context) {
     val aliases: String get() = sp.getString(KEY_ALIASES, "") ?: ""
     val keepAssistant get() = sp.getBoolean(KEY_KEEP_ASSISTANT, true)
     val keepAlive get() = sp.getBoolean(KEY_KEEP_ALIVE, true)
+    /** The user generated ChgCtl's icon.conf once: keep it current after boots / SystemUI updates. */
+    var chargeIconSetup: Boolean
+        get() = sp.getBoolean(KEY_CHARGE_ICON_SETUP, false)
+        set(v) = sp.edit().putBoolean(KEY_CHARGE_ICON_SETUP, v).apply()
 
     companion object {
         const val KEY_PROVIDER = "provider"
@@ -47,6 +51,7 @@ class Prefs(context: Context) {
         const val KEY_ALIASES = "app_aliases"
         const val KEY_KEEP_ASSISTANT = "keep_assistant"
         const val KEY_KEEP_ALIVE = "keep_alive"
+        const val KEY_CHARGE_ICON_SETUP = "charge_icon_setup"
 
         const val MAP_COMAPS = "comaps"
         const val MAP_AMAP = "amap"
