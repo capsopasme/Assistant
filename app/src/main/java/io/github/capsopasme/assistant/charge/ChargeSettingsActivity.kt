@@ -60,9 +60,13 @@ class ChargeSettingsFragment : PreferenceFragmentCompat() {
     /**
      * Preference values come from the last status read; a change goes to the module.
      * [syncing] = we are only showing the module's values, nothing to write.
+     * Nothing is ever written before the module's real state is known: preferences persist
+     * their initial / default value while they are being inflated, and that must not reach
+     * the module (it would switch bypass, vibration, the icon… off on every visit).
      */
     private inner class ConfigStore : PreferenceDataStore() {
-        var syncing = false
+        var syncing = true
+        private val writable get() = !syncing && st != null && isResumed
 
         override fun getBoolean(key: String, defValue: Boolean): Boolean {
             val s = st ?: return defValue
@@ -97,7 +101,7 @@ class ChargeSettingsFragment : PreferenceFragmentCompat() {
         }
 
         override fun putBoolean(key: String, value: Boolean) {
-            if (syncing) return
+            if (!writable) return
             if (key == "BYPASS") {
                 write("旁路供电") {
                     val ok = ChgCtl.send(if (value) ChgCtl.Cmd.BYPASS_ON else ChgCtl.Cmd.BYPASS_OFF)
@@ -109,7 +113,7 @@ class ChargeSettingsFragment : PreferenceFragmentCompat() {
         }
 
         override fun putInt(key: String, value: Int) {
-            if (syncing) return
+            if (!writable) return
             val s = st ?: return
             when (key) {
                 "LIMIT" -> write("停充上限") { ChgCtl.limit(value, minOf(s.resume, value - 5)) }
@@ -119,7 +123,7 @@ class ChargeSettingsFragment : PreferenceFragmentCompat() {
         }
 
         override fun putString(key: String, value: String?) {
-            if (syncing || value == null) return
+            if (!writable || value == null) return
             write(key) { ChgCtl.set(key, value) }
         }
     }
@@ -169,6 +173,7 @@ class ChargeSettingsFragment : PreferenceFragmentCompat() {
 
     /** Write, report a failure, then read back what the module made of it. */
     private fun write(what: String, block: suspend () -> RootShell.Result) {
+        if (view == null) return
         viewLifecycleOwner.lifecycleScope.launch {
             val r = withContext(Dispatchers.IO) { runCatching { block() }.getOrElse { RootShell.Result(-1, it.message.orEmpty()) } }
             if (!isAdded) return@launch
