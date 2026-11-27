@@ -60,6 +60,14 @@
             app:title="打开助手" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="充电" app:iconSpaceReserved="false">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="charge"
+            app:summary="停充上限、旁路供电、自动旁路、状态栏图标（需要 ChgCtl 模块）"
+            app:title="充电控制" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="大模型" app:iconSpaceReserved="false">
         <ListPreference
             app:defaultValue="deepseek"

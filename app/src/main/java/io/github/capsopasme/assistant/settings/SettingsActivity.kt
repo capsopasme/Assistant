@@ -19,6 +19,8 @@ import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.github.capsopasme.assistant.BuildConfig
 import io.github.capsopasme.assistant.R
+import io.github.capsopasme.assistant.charge.ChargeSettingsActivity
+import io.github.capsopasme.assistant.charge.ChgCtl
 import io.github.capsopasme.assistant.llm.LlmClient
 import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.llm.Provider
@@ -73,6 +75,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         click("status_voice") { applySetup() }
         click("autostart") { openFirst(*AssistantSetup.autostartIntents(requireContext()).toTypedArray()) }
         click("open_panel") { startActivity(Intent(requireContext(), PanelActivity::class.java)) }
+        click("charge") { startActivity(Intent(requireContext(), ChargeSettingsActivity::class.java)) }
         click("test_model") { testModel() }
         click("diagnostics") { showDiagnostics() }
         findPreference<Preference>(Prefs.KEY_VOICE_RESIDENT)?.setOnPreferenceChangeListener { _, value ->
@@ -224,6 +227,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
             val root = RootShell.available()
             findPreference<Preference>("status_root")?.summary =
                 if (root) "✓ 已授权" else "✗ 未授权：在 KernelSU 管理器里给「助手」开启超级用户（KernelSU 不会弹窗询问）"
+            if (root) refreshCharge()
             // opening the app is a moment to put back what the system may have reset
             // (voice_interaction_service cleared while the role stays: the press then does nothing)
             if (root && Prefs.get(ctx).keepAssistant && AssistantSetup.ensure(ctx.applicationContext, "打开助手")) {
@@ -243,6 +247,21 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 true -> "✓ 已允许"
                 false -> "✗ 未允许：长按电源键只在助手界面里有效（点这里一键配置）"
                 null -> "需要 root 才能检查；也可在 应用管理 → 助手 → 其他权限 里手动允许"
+            }
+        }
+    }
+
+    private suspend fun refreshCharge() {
+        val s = ChgCtl.status()
+        findPreference<Preference>("charge")?.summary = when {
+            s == null -> "没有安装 ChgCtl 模块"
+            !s.running -> "ChgCtl 守护进程未运行"
+            else -> buildString {
+                append(ChgCtl.modeText(s.mode))
+                if (s.bypass && !s.plugged) append("（旁路待命）")
+                append(" · 上限 ").append(if (s.limit >= 100) "不限" else "${s.limit}%")
+                if (s.auto != "off") append(" · 自动旁路").append(if (s.auto == "screen") "（亮屏）" else "（插电）")
+                if (!s.supported) append("\n⚠ 模块需要升级到 v1.3.0")
             }
         }
     }

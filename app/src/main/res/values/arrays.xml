@@ -30,4 +30,31 @@
         <item>800</item>
         <item>1300</item>
     </string-array>
+
+    <string-array name="charge_auto_labels">
+        <item>关</item>
+        <item>亮屏时旁路（灭屏后恢复充电）</item>
+        <item>插电即旁路</item>
+    </string-array>
+    <string-array name="charge_auto_values">
+        <item>off</item>
+        <item>screen</item>
+        <item>plug</item>
+    </string-array>
+    <string-array name="charge_off_labels">
+        <item>立即</item>
+        <item>5 分钟</item>
+        <item>10 分钟</item>
+        <item>15 分钟</item>
+        <item>30 分钟</item>
+        <item>60 分钟</item>
+    </string-array>
+    <string-array name="charge_off_values">
+        <item>0</item>
+        <item>5</item>
+        <item>10</item>
+        <item>15</item>
+        <item>30</item>
+        <item>60</item>
+    </string-array>
 </resources>

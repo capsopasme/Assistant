@@ -22,6 +22,12 @@
         android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- ChgCtl's daemon (root) pushes its state with this permission; other apps cannot -->
+    <permission
+        android:name="io.github.capsopasme.assistant.permission.CHGCTL_STATE"
+        android:label="@string/perm_chgctl_state"
+        android:protectionLevel="signature" />
+
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
@@ -62,6 +68,8 @@
         <package android:name="io.github.capsopasme.audioinput" />
         <package android:name="com.xiaomi.mibrain.speech" />
         <package android:name="com.miui.securitycenter" />
+        <!-- resolves the bypass icon's drawable id by name -->
+        <package android:name="com.android.systemui" />
     </queries>
 
     <application
@@ -162,6 +170,41 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the default digital assistant from being frozen so the power-key long press reaches it" />
         </service>
+
+        <!-- ChgCtl settings; long-pressing the bypass tile opens it -->
+        <activity
+            android:name=".charge.ChargeSettingsActivity"
+            android:exported="true"
+            android:label="@string/charge_title"
+            android:theme="@style/Theme.Assistant.Settings">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".charge.BypassTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_bypass"
+            android:label="@string/tile_bypass"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
+
+        <receiver
+            android:name=".charge.ChargeStateReceiver"
+            android:exported="true"
+            android:permission="io.github.capsopasme.assistant.permission.CHGCTL_STATE">
+            <intent-filter>
+                <action android:name="io.github.capsopasme.assistant.action.CHGCTL_STATE" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".system.BootReceiver"

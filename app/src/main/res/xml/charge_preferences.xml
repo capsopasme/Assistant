@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Values are read from / written to the ChgCtl module (config.conf through its CLI), see ChargeSettingsFragment. -->
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory app:title="状态" app:iconSpaceReserved="false">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_status"
+            app:summary="读取中…"
+            app:title="ChgCtl" />
+        <SwitchPreferenceCompat
+            app:iconSpaceReserved="false"
+            app:key="BYPASS"
+            app:summary="插电时由充电器直接给手机供电，电池不充也不放"
+            app:title="旁路供电" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_limit" app:title="停充上限" app:iconSpaceReserved="false">
+        <SeekBarPreference
+            android:max="100"
+            app:iconSpaceReserved="false"
+            app:key="LIMIT"
+            app:min="40"
+            app:showSeekBarValue="true"
+            app:title="停充上限（100 = 不限）"
+            app:updatesContinuously="false" />
+        <SeekBarPreference
+            android:max="98"
+            app:iconSpaceReserved="false"
+            app:key="RESUME"
+            app:min="10"
+            app:showSeekBarValue="true"
+            app:summary="电量掉到这里且驱动没有自己恢复时，重新开始充电"
+            app:title="复充阈值"
+            app:updatesContinuously="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_auto" app:title="自动旁路" app:iconSpaceReserved="false">
+        <ListPreference
+            app:entries="@array/charge_auto_labels"
+            app:entryValues="@array/charge_auto_values"
+            app:iconSpaceReserved="false"
+            app:key="AUTO_BYPASS"
+            app:title="模式" />
+        <SeekBarPreference
+            android:max="95"
+            app:iconSpaceReserved="false"
+            app:key="AUTO_BYPASS_SOC"
+            app:min="20"
+            app:showSeekBarValue="true"
+            app:summary="低于这个电量时先充到这里，再旁路"
+            app:title="电量不低于（%）"
+            app:updatesContinuously="false" />
+        <ListPreference
+            app:entries="@array/charge_off_labels"
+            app:entryValues="@array/charge_off_values"
+            app:iconSpaceReserved="false"
+            app:key="AUTO_BYPASS_OFF_MIN"
+            app:title="灭屏后恢复充电" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_bypass" app:title="旁路选项" app:iconSpaceReserved="false">
+        <SeekBarPreference
+            android:max="80"
+            app:iconSpaceReserved="false"
+            app:key="BYPASS_FLOOR"
+            app:min="5"
+            app:showSeekBarValue="true"
+            app:summary="开启旁路时若低于此电量，先充到这里再旁路"
+            app:title="保底电量（%）"
+            app:updatesContinuously="false" />
+        <SwitchPreferenceCompat
+            app:iconSpaceReserved="false"
+            app:key="BYPASS_OFF_ON_UNPLUG"
+            app:summary="手动开的旁路在拔电后关闭（短暂掉线不算拔电）。自动旁路总是随拔电结束"
+            app:title="拔电后关闭旁路" />
+        <SwitchPreferenceCompat
+            app:iconSpaceReserved="false"
+            app:key="BYPASS_PERSIST"
+            app:title="重启后保留旁路开关" />
+        <SwitchPreferenceCompat
+            app:iconSpaceReserved="false"
+            app:key="VIBRATE"
+            app:summary="开 = 一次重击，关 = 双击，被拒绝 = 闷响"
+            app:title="切换旁路时震动" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:key="cat_icon" app:title="状态栏图标" app:iconSpaceReserved="false">
+        <SwitchPreferenceCompat
+            app:iconSpaceReserved="false"
+            app:key="ICON"
+            app:summary="插着电且电池保持不充（旁路或到达上限）时，在状态栏显示插头图标"
+            app:title="旁路图标" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_icon_setup"
+            app:summary="按名字解析图标资源和状态栏接口，交给 ChgCtl 使用。开机和系统界面更新后会自动重新生成"
+            app:title="生成图标配置" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_icon_test"
+            app:summary="显示一个测试图标几秒钟，确认 HyperOS 接受这种方式"
+            app:title="图标自检" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="维护" app:iconSpaceReserved="false">
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_calibrate"
+            app:summary="插着充电器、电量 20%~90% 时运行，约 1~2 分钟，期间不要拔线"
+            app:title="校准充电开关" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_log"
+            app:title="查看日志" />
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="ch_restart"
+            app:title="重启守护进程" />
+    </PreferenceCategory>
+</PreferenceScreen>
