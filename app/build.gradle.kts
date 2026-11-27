@@ -23,6 +23,13 @@ android {
         targetSdk = 36
         versionCode = appVersionCode
         versionName = appVersionName
+        // the phone is arm64; ONNX Runtime ships every ABI otherwise (+~30 MB)
+        ndk { abiFilters += "arm64-v8a" }
+    }
+
+    // OCR models (fetched by CI into assets/ocr): stored uncompressed, read straight from the APK
+    androidResources {
+        noCompress += "onnx"
     }
 
     signingConfigs {
@@ -102,6 +109,7 @@ dependencies {
     implementation(libs.androidx.preference)
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.material)
+    implementation(libs.onnxruntime)
 
     testImplementation(libs.junit)
     testImplementation(libs.json)

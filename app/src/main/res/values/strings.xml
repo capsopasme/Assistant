@@ -6,4 +6,5 @@
     <string name="tile_bypass">旁路供电</string>
     <string name="charge_title">充电</string>
     <string name="perm_chgctl_state">接收 ChgCtl 充电状态</string>
+    <string name="perm_ocr">识别屏幕文字</string>
 </resources>

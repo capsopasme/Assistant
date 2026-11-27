@@ -47,6 +47,7 @@ import io.github.capsopasme.assistant.llm.LlmClient
 import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.parse.LocalParser
 import io.github.capsopasme.assistant.settings.SettingsActivity
+import io.github.capsopasme.assistant.system.ForeignPlayback
 import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.system.RootShell
 import io.github.capsopasme.assistant.util.Marks
@@ -201,6 +202,12 @@ class PanelController(
         card.alpha = 0f
         card.animate().translationY(0f).alpha(1f).setDuration(200).setInterpolator(DecelerateInterpolator(1.6f)).start()
         if (startedInput) beginInput()
+        else if (root.hasWindowFocus() && !disposed) {
+            // the window already had focus (the panel replaced the OCR view in a visible session):
+            // the focus listener won't fire, so start here
+            startedInput = true
+            beginInput()
+        }
     }
 
     /** Releases everything; the keyboard is switched back even though the panel is going away. */
@@ -429,13 +436,18 @@ class PanelController(
             )
             .setOnAudioFocusChangeListener { }
             .build()
-        if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focusRequest = req
+        if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            focusRequest = req
+            // players that ignore the focus loss (红果短剧) are paused through their own session
+            ForeignPlayback.onFocusTaken(context)
+        }
     }
 
     private fun abandonAudioFocus() {
         val req = focusRequest ?: return
         focusRequest = null
         context.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(req)
+        ForeignPlayback.onFocusReleased(context)
     }
 
     private fun updateMicState() {

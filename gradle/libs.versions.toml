@@ -13,6 +13,7 @@ androidx-lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime-kt
 material = { module = "com.google.android.material:material", version = "1.14.0" }
 junit = { module = "junit:junit", version = "4.13.2" }
 json = { module = "org.json:json", version = "20250517" }
+onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime-android", version = "1.22.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }

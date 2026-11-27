@@ -6,3 +6,9 @@
 -keep class io.github.capsopasme.assistant.root.IconTool {
     public static void main(java.lang.String[]);
 }
+-keep class io.github.capsopasme.assistant.root.MediaTool {
+    public static void main(java.lang.String[]);
+}
+
+# ONNX Runtime: native code calls back into these classes
+-keep class ai.onnxruntime.** { *; }
