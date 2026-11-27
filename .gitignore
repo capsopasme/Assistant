@@ -16,3 +16,6 @@
 # never commit signing keys
 *.jks
 *.keystore
+
+# OCR models, fetched by .github/scripts/fetch-ocr-models.sh
+/app/src/main/assets/ocr/

@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
+import io.github.capsopasme.assistant.system.ForeignPlayback
 import io.github.capsopasme.assistant.system.SystemControl
 import io.github.capsopasme.assistant.util.Prefs
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,13 @@ class ActionExecutor(
 
     /** [fromModel]: the model asked for this (looser app matching, failures go back to it). */
     suspend fun execute(action: Action, fromModel: Boolean = false): ActionResult = try {
+        // The user takes over playback, or leaves the app under the panel: a player the panel
+        // paused (see ForeignPlayback) must not start again behind their back.
+        when (action) {
+            is Action.Media, is Action.PlayMusic, is Action.OpenApp, is Action.Call,
+            is Action.Navigate, is Action.WebSearch, is Action.ShowAlarms -> ForeignPlayback.forget()
+            else -> {}
+        }
         when (action) {
             is Action.OpenApp -> openApp(action.name, fromModel)
             is Action.SetTimer -> setTimer(action)

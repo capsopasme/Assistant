@@ -80,6 +80,15 @@ jobs:
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "Version $name ($code)"
 
+      - name: Cache OCR models
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/ocr
+          key: ocr-models-${{ hashFiles('.github/scripts/fetch-ocr-models.sh') }}
+
+      - name: OCR models
+        run: .github/scripts/fetch-ocr-models.sh
+
       - name: Unit tests
         run: .github/scripts/run-logged.sh ./gradlew --no-daemon :app:testDebugUnitTest
 
@@ -108,6 +117,11 @@ jobs:
             echo "::error title=Signing::A release must not be signed with the debug key"
             exit 1
           fi
+          echo "--- OCR models"
+          unzip -lv "$apk" | grep -E 'assets/ocr/|lib/arm64-v8a/libonnxruntime' || true
+          for f in assets/ocr/det.onnx assets/ocr/rec.onnx assets/ocr/keys.txt lib/arm64-v8a/libonnxruntime.so; do
+            unzip -l "$apk" "$f" >/dev/null || { echo "::error title=OCR::$f missing from the APK"; exit 1; }
+          done
           mkdir -p dist
           out="dist/Assistant-${{ steps.version.outputs.name }}.apk"
           out="${out//+/_}"

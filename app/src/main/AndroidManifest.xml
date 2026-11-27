@@ -28,6 +28,15 @@
         android:label="@string/perm_chgctl_state"
         android:protectionLevel="signature" />
 
+    <!--
+      statusbar_dt2s (root) asks for OCR on a two-finger double tap of the status bar. Root is
+      exempt from the check; no other app can hold this signature permission.
+    -->
+    <permission
+        android:name="io.github.capsopasme.assistant.permission.OCR"
+        android:label="@string/perm_ocr"
+        android:protectionLevel="signature" />
+
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
@@ -203,6 +212,15 @@
             android:permission="io.github.capsopasme.assistant.permission.CHGCTL_STATE">
             <intent-filter>
                 <action android:name="io.github.capsopasme.assistant.action.CHGCTL_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".ocr.OcrTriggerReceiver"
+            android:exported="true"
+            android:permission="io.github.capsopasme.assistant.permission.OCR">
+            <intent-filter>
+                <action android:name="io.github.capsopasme.assistant.action.OCR" />
             </intent-filter>
         </receiver>
 

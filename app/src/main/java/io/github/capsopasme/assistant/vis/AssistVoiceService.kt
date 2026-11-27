@@ -8,10 +8,13 @@ import android.view.View
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import io.github.capsopasme.assistant.R
+import io.github.capsopasme.assistant.ocr.OcrController
+import io.github.capsopasme.assistant.ocr.OcrLauncher
 import io.github.capsopasme.assistant.panel.PanelController
 import io.github.capsopasme.assistant.panel.PanelHost
 import io.github.capsopasme.assistant.panel.PermissionActivity
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
@@ -41,6 +44,7 @@ class AssistVoiceService : VoiceInteractionService() {
 
     override fun onReady() {
         super.onReady()
+        instance = this
         // never collect the screen's view tree or a screenshot when invoked
         disabledShowContext = VoiceInteractionSession.SHOW_WITH_ASSIST or VoiceInteractionSession.SHOW_WITH_SCREENSHOT
         KeepAliveService.sync(this)
@@ -57,6 +61,7 @@ class AssistVoiceService : VoiceInteractionService() {
     }
 
     override fun onShutdown() {
+        if (instance === this) instance = null
         scope?.cancel()
         scope = null
         super.onShutdown()
@@ -68,6 +73,10 @@ class AssistVoiceService : VoiceInteractionService() {
 
     companion object {
         private const val TAG = "AssistVoiceService"
+
+        /** the bound service (the system binds it while we're the assistant); shows OCR sessions */
+        @Volatile var instance: AssistVoiceService? = null
+            private set
     }
 }
 
@@ -84,22 +93,17 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
 
     override val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var panel: PanelController? = null
+    private var ocr: OcrController? = null
+    private var root: FrameLayout? = null
     private var closing = false
     private var permissionPending = false
 
-    override fun onCreateContentView(): View {
-        val themed = ContextThemeWrapper(context, R.style.Theme_Assistant)
-        val view = LayoutInflater.from(themed).inflate(R.layout.activity_panel, null)
-        view.setBackgroundColor(0x52000000) // the dim behind the sheet
-        panel = PanelController(themed, view, this)
-        return view
-    }
+    /** What the window shows is decided per show: the panel (power key) or OCR (status bar gesture). */
+    override fun onCreateContentView(): View = FrameLayout(context).also { root = it }
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        Marks.write(context, Marks.SHOW)
-        // the window is visible now, so (re)starting the keep-alive service is allowed
-        KeepAliveService.sync(context)
+        val ocrMode = args?.getString(OcrLauncher.EXTRA_MODE) == OcrLauncher.MODE_OCR
         window?.window?.let { w ->
             WindowCompat.setDecorFitsSystemWindows(w, false)
             w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
@@ -107,8 +111,45 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
             w.navigationBarColor = Color.TRANSPARENT
             w.isNavigationBarContrastEnforced = false
             w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // OCR draws the screenshot edge to edge, cutout area included, so it lines up exactly
+            w.attributes = w.attributes.apply {
+                layoutInDisplayCutoutMode = if (ocrMode) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            }
+        }
+        if (ocrMode) showOcr() else showPanel()
+    }
+
+    private fun showPanel() {
+        Marks.write(context, Marks.SHOW)
+        // the window is visible now, so (re)starting the keep-alive service is allowed
+        KeepAliveService.sync(context)
+        ocr?.dispose()
+        ocr = null
+        val host = root ?: return
+        if (panel == null) {
+            val themed = ContextThemeWrapper(context, R.style.Theme_Assistant)
+            val view = LayoutInflater.from(themed).inflate(R.layout.activity_panel, host, false)
+            view.setBackgroundColor(0x52000000) // the dim behind the sheet
+            host.removeAllViews()
+            host.addView(view)
+            panel = PanelController(themed, view, this)
         }
         panel?.onShown()
+    }
+
+    private fun showOcr() {
+        val shot = OcrLauncher.takeShot()
+        val host = root
+        if (shot == null || host == null) {
+            if (panel == null && ocr == null) close()
+            return
+        }
+        panel?.dispose()
+        panel = null
+        ocr?.dispose()
+        host.removeAllViews()
+        ocr = OcrController(ContextThemeWrapper(context, R.style.Theme_Assistant), host, shot, this)
     }
 
     override fun onHide() {
@@ -121,12 +162,14 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
         if (closing) return
         closing = true
         panel?.dispose()
+        ocr?.dispose()
         scope.cancel()
         runCatching { finish() }
     }
 
     override fun onDestroy() {
         panel?.dispose()
+        ocr?.dispose()
         scope.cancel()
         super.onDestroy()
     }
