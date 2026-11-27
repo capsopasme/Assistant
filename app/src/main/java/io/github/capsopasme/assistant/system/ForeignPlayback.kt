@@ -38,7 +38,7 @@ object ForeignPlayback {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private var pauseJob: Job? = null
-    /** packages we paused and owe a resume */
+    /** what we paused / muted and owe a resume: MediaTool's tokens (s:PKG, p:PIID, m:PIID) */
     private val paused = LinkedHashSet<String>()
 
     /** whether anything is playing (call before taking focus: well-behaved players stop right after) */
@@ -57,11 +57,11 @@ object ForeignPlayback {
             try {
                 if (RootShell.lastAvailable != false) mutex.withLock {
                     val out = tool(app, "pause", Process.myUid().toString())
-                    val got = out.filter { it.first == "paused" }.map { it.second.substringBefore(' ') }
-                    // forget() while the helper ran (user took over / left the app): owe no resume
-                    if (isActive) paused.addAll(got)
-                    any = got.isNotEmpty()
-                    val summary = out.joinToString("；") { "${it.first}=${it.second}" }
+                    val tokens = out.filter { it.first == "resume" }.map { it.second }
+                    if (isActive) paused.addAll(tokens)
+                    else undoMutes(app, tokens) // forgotten meanwhile: owe no resume, but never leave a player muted
+                    any = out.any { it.first == "paused" }
+                    val summary = out.filter { it.first != "resume" }.joinToString("；") { "${it.first}=${it.second}" }
                     Log.i(TAG, "pause: $summary")
                     if (summary.isNotEmpty()) Marks.writeText(app, MARK, summary)
                 }
@@ -80,17 +80,37 @@ object ForeignPlayback {
             pending?.join() // a pause still on its way must land first, or the resume would miss it
             mutex.withLock {
                 if (paused.isEmpty()) return@withLock
-                val pkgs = paused.toList()
+                val tokens = paused.toList()
                 paused.clear()
-                tool(app, "play", *pkgs.toTypedArray())
+                tool(app, "resume", *tokens.toTypedArray())
             }
         }
     }
 
-    /** the user gave a media command ("暂停", "继续播放"…): it's theirs now, don't resume on our own */
-    fun forget() {
-        pauseJob?.cancel()
-        scope.launch { mutex.withLock { paused.clear() } }
+    /**
+     * The user took over playback or left the app under the panel: don't start it again on our own.
+     * A player we only muted is always unmuted (a muted player would stay silent for good), and a
+     * paused one is resumed when [resume] (the user said "继续播放": its own session may ignore that,
+     * as 红果's does, so the players are started directly).
+     */
+    fun takeOver(context: Context, resume: Boolean) {
+        val app = context.applicationContext
+        val pending = pauseJob
+        pending?.cancel()
+        scope.launch {
+            pending?.join()
+            mutex.withLock {
+                val tokens = paused.toList()
+                paused.clear()
+                if (resume) { if (tokens.isNotEmpty()) tool(app, "resume", *tokens.toTypedArray()) }
+                else undoMutes(app, tokens)
+            }
+        }
+    }
+
+    private suspend fun undoMutes(app: Context, tokens: List<String>) {
+        val mutes = tokens.filter { it.startsWith("m:") }
+        if (mutes.isNotEmpty()) tool(app, "resume", *mutes.toTypedArray())
     }
 
     private suspend fun tool(ctx: Context, vararg args: String): List<Pair<String, String>> {

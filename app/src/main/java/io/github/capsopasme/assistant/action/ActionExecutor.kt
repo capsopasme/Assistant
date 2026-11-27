@@ -37,8 +37,9 @@ class ActionExecutor(
         // The user takes over playback, or leaves the app under the panel: a player the panel
         // paused (see ForeignPlayback) must not start again behind their back.
         when (action) {
-            is Action.Media, is Action.PlayMusic, is Action.OpenApp, is Action.Call,
-            is Action.Navigate, is Action.WebSearch, is Action.ShowAlarms -> ForeignPlayback.forget()
+            is Action.Media -> ForeignPlayback.takeOver(context, resume = action.command == MediaCommand.PLAY)
+            is Action.PlayMusic, is Action.OpenApp, is Action.Call,
+            is Action.Navigate, is Action.WebSearch, is Action.ShowAlarms -> ForeignPlayback.takeOver(context, resume = false)
             else -> {}
         }
         when (action) {

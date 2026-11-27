@@ -17,16 +17,27 @@ import java.util.Set;
  *
  * Some players keep playing when the assistant takes audio focus: they ignore a transient focus
  * loss, and the assistant's panel (a voice-interaction window) does not pause the activity under
- * it either. 红果短剧 is one. This finds who is still playing (root sees the real uid of every
- * player), and pauses exactly those apps' media sessions; "play" later resumes exactly those.
- * The generic media key is never used: it goes to the most recent session, which may be a
- * different app (and would start the music player instead).
+ * it either. This finds who is still playing (root sees the real uid of every player) and stops
+ * exactly those, in the most cooperative way that works:
  *
- *   pause SELF_UID     pause apps still playing media; prints paused=PKG / failed=PKG / none=1
- *   play PKG...        resume the given apps' sessions; prints ok=1
+ *  1. the app's media session, if it is a real one (it reports a playback state): pause() there,
+ *     then the media button sent to that session only. The app knows it paused.
+ *  2. otherwise, or if that didn't stop the sound, the players themselves: every AudioTrack /
+ *     MediaPlayer / AAudio stream is registered with the audio service together with a control
+ *     interface (the one the system uses to enforce focus); pause it there. 红果短剧 needs this:
+ *     its two sessions are empty shells (no state, no metadata) that ignore every command.
+ *  3. if a player won't pause, mute it (system-side volume of that player only), so at least the
+ *     microphone doesn't hear it.
  *
- * Root holds MEDIA_CONTENT_CONTROL and MODIFY_AUDIO_ROUTING. Pure Java, reflection only: the hidden
- * interfaces are looked up by name, so it adapts to the running system.
+ * Each step prints a resume token, and "resume" undoes exactly those: the same session, the same
+ * player ids (never another player of the app, e.g. the next episode it preloaded and keeps paused).
+ * The generic media key is never used: it goes to the most recent session, maybe another app.
+ *
+ *   pause SELF_UID   -> paused=PKG (how) | failed=PKG (why) | none=1, plus resume=TOKEN lines
+ *   resume TOKEN...  -> s:PKG (session play) | p:PIID (player start) | m:PIID (unmute); ok=1
+ *
+ * Root holds MEDIA_CONTENT_CONTROL and MODIFY_AUDIO_ROUTING (the latter is what makes the audio
+ * service return the real uids and player interfaces). Pure Java, reflection only.
  */
 public final class MediaTool {
     private static final int USAGE_UNKNOWN = 0;
@@ -52,18 +63,16 @@ public final class MediaTool {
 
     private static int run(String[] args) throws Exception {
         if (args.length >= 2 && args[0].equals("pause")) return pause(Integer.parseInt(args[1]));
-        if (args.length >= 2 && args[0].equals("play")) {
-            Set<String> pkgs = new LinkedHashSet<>();
-            for (int i = 1; i < args.length; i++) pkgs.add(args[i]);
-            for (Object c : controllers(pkgs)) {
-                if (!invoke(c, "play", CALLER)) mediaKey(c, KeyEvent.KEYCODE_MEDIA_PLAY);
-            }
+        if (args.length >= 1 && args[0].equals("resume")) {
+            for (int i = 1; i < args.length; i++) resume(args[i]);
             System.out.println("ok=1");
             return 0;
         }
-        System.out.println("error=usage: pause SELF_UID | play PKG...");
+        System.out.println("error=usage: pause SELF_UID | resume TOKEN...");
         return 1;
     }
+
+    // --- pause --------------------------------------------------------------------------------
 
     private static int pause(int selfUid) throws Exception {
         // started the moment the assistant took focus: give players that handle focus loss a beat
@@ -78,41 +87,141 @@ public final class MediaTool {
         Method forUid = find(pm.getClass(), "getPackagesForUid", 1);
         for (int uid : uids) {
             String[] pkgs = (String[]) forUid.invoke(pm, uid);
-            if (pkgs == null || pkgs.length == 0) continue;
+            String pkg = pkgs != null && pkgs.length > 0 ? pkgs[0] : "uid" + uid;
             Set<String> set = new LinkedHashSet<>();
-            for (String p : pkgs) set.add(p);
-            List<Object> ctrls = controllers(set);
-            if (ctrls.isEmpty()) {
-                System.out.println("failed=" + pkgs[0] + " (no media session)");
+            if (pkgs != null) for (String p : pkgs) set.add(p);
+
+            // 1. a real media session (one that reports a playback state)
+            List<Object> real = new ArrayList<>();
+            for (Object c : controllers(set)) if (hasState(c)) real.add(c);
+            if (!real.isEmpty()) {
+                for (Object c : real) invoke(c, "pause", CALLER);
+                boolean ok = stoppedAfter(uid, 400);
+                if (!ok) {
+                    for (Object c : real) mediaKey(c, KeyEvent.KEYCODE_MEDIA_PAUSE);
+                    ok = stoppedAfter(uid, 300);
+                }
+                if (ok) {
+                    System.out.println("resume=s:" + pkgOf(real.get(0), pkg));
+                    System.out.println("paused=" + pkg + " (session)");
+                    continue;
+                }
+            }
+
+            // 2. the players themselves
+            List<Object> players = activePlayers(uid);
+            List<Integer> paused = new ArrayList<>();
+            for (Object pc : players) {
+                Object proxy = proxyOf(pc);
+                Integer piid = piidOf(pc);
+                if (proxy == null || piid == null) continue;
+                if (call(proxy, "pause")) paused.add(piid);
+            }
+            if (!paused.isEmpty() && stoppedAfter(uid, 300)) {
+                for (int piid : paused) System.out.println("resume=p:" + piid);
+                System.out.println("paused=" + pkg + " (player)");
                 continue;
             }
-            for (Object c : ctrls) invoke(c, "pause", CALLER);
-            if (stoppedAfter(uid, 400)) {
-                System.out.println("paused=" + pkgOf(ctrls.get(0), pkgs[0]));
-                continue;
+
+            // 3. still audible: mute what is still playing (and resume what did pause)
+            for (int piid : paused) System.out.println("resume=p:" + piid);
+            int muted = 0;
+            for (Object pc : activePlayers(uid)) {
+                Object proxy = proxyOf(pc);
+                Integer piid = piidOf(pc);
+                if (proxy == null || piid == null) continue;
+                if (call(proxy, "setVolume", 0f)) {
+                    System.out.println("resume=m:" + piid);
+                    muted++;
+                }
             }
-            // the session ignored pause(): try the media button, delivered to this app's session only
-            for (Object c : ctrls) mediaKey(c, KeyEvent.KEYCODE_MEDIA_PAUSE);
-            if (stoppedAfter(uid, 400)) System.out.println("paused=" + pkgOf(ctrls.get(0), pkgs[0]));
-            else System.out.println("failed=" + pkgs[0] + " (still playing)");
+            if (muted > 0) System.out.println("paused=" + pkg + " (muted)");
+            else System.out.println("failed=" + pkg + (players.isEmpty() ? " (no player interface)" : " (still playing)"));
         }
         return 0;
     }
 
+    // --- resume -------------------------------------------------------------------------------
+
+    private static void resume(String token) throws Exception {
+        if (token.length() < 3 || token.charAt(1) != ':') return;
+        String v = token.substring(2);
+        switch (token.charAt(0)) {
+            case 's': {
+                Set<String> set = new LinkedHashSet<>();
+                set.add(v);
+                for (Object c : controllers(set)) {
+                    if (!invoke(c, "play", CALLER)) mediaKey(c, KeyEvent.KEYCODE_MEDIA_PLAY);
+                }
+                break;
+            }
+            case 'p':
+            case 'm': {
+                int piid = Integer.parseInt(v);
+                for (Object pc : allPlayers()) {
+                    Integer id = piidOf(pc);
+                    if (id == null || id != piid) continue;
+                    Object proxy = proxyOf(pc);
+                    if (proxy == null) continue;
+                    if (token.charAt(0) == 'p') call(proxy, "start");
+                    else call(proxy, "setVolume", 1f);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    // --- audio service ------------------------------------------------------------------------
+
+    private static List<?> allPlayers() throws Exception {
+        Object audio = service("audio", "android.media.IAudioService");
+        return asList(find(audio.getClass(), "getActivePlaybackConfigurations", 0).invoke(audio));
+    }
+
+    private static boolean isMediaActive(Object pc) throws Exception {
+        if (!(Boolean) find(pc.getClass(), "isActive", 0).invoke(pc)) return false;
+        Object attrs = find(pc.getClass(), "getAudioAttributes", 0).invoke(pc);
+        int usage = (Integer) find(attrs.getClass(), "getUsage", 0).invoke(attrs);
+        return usage == USAGE_MEDIA || usage == USAGE_GAME || usage == USAGE_UNKNOWN;
+    }
+
+    private static int uidOf(Object pc) throws Exception {
+        return (Integer) find(pc.getClass(), "getClientUid", 0).invoke(pc);
+    }
+
     /** uids (other than ours) with an active media / game / unknown-usage player */
     private static Set<Integer> playingUids(int selfUid) throws Exception {
-        Object audio = service("audio", "android.media.IAudioService");
-        List<?> configs = asList(find(audio.getClass(), "getActivePlaybackConfigurations", 0).invoke(audio));
         Set<Integer> uids = new LinkedHashSet<>();
-        for (Object pc : configs) {
-            if (!(Boolean) find(pc.getClass(), "isActive", 0).invoke(pc)) continue;
-            Object attrs = find(pc.getClass(), "getAudioAttributes", 0).invoke(pc);
-            int usage = (Integer) find(attrs.getClass(), "getUsage", 0).invoke(attrs);
-            if (usage != USAGE_MEDIA && usage != USAGE_GAME && usage != USAGE_UNKNOWN) continue;
-            int uid = (Integer) find(pc.getClass(), "getClientUid", 0).invoke(pc);
+        for (Object pc : allPlayers()) {
+            if (!isMediaActive(pc)) continue;
+            int uid = uidOf(pc);
             if (uid >= 10000 && uid != selfUid) uids.add(uid);
         }
         return uids;
+    }
+
+    private static List<Object> activePlayers(int uid) throws Exception {
+        List<Object> out = new ArrayList<>();
+        for (Object pc : allPlayers()) if (isMediaActive(pc) && uidOf(pc) == uid) out.add(pc);
+        return out;
+    }
+
+    private static Object proxyOf(Object pc) {
+        try {
+            return find(pc.getClass(), "getPlayerProxy", 0).invoke(pc);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Integer piidOf(Object pc) {
+        try {
+            return (Integer) find(pc.getClass(), "getPlayerInterfaceId", 0).invoke(pc);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static boolean stoppedAfter(int uid, long ms) throws Exception {
@@ -124,8 +233,12 @@ public final class MediaTool {
         return false;
     }
 
+    // --- media sessions -----------------------------------------------------------------------
+
     /** ISessionController binders of the given packages' sessions */
     private static List<Object> controllers(Set<String> pkgs) throws Exception {
+        List<Object> out = new ArrayList<>();
+        if (pkgs.isEmpty()) return out;
         Object msm = service("media_session", "android.media.session.ISessionManager");
         Method get = null;
         for (Method m : msm.getClass().getMethods()) {
@@ -134,17 +247,24 @@ public final class MediaTool {
         if (get == null) throw new NoSuchMethodException("ISessionManager.getSessions");
         List<?> tokens = asList(get.invoke(msm, null, 0));
         Method asItf = Class.forName("android.media.session.ISessionController$Stub").getMethod("asInterface", IBinder.class);
-        List<Object> out = new ArrayList<>();
         for (Object token : tokens) {
             // Token.getBinder() returns ISessionController on current systems, a raw IBinder on some
             Object o = find(token.getClass(), "getBinder", 0).invoke(token);
-            Object c = o instanceof IBinder && !(o.getClass().getName().contains("ISessionController"))
-                    ? asItf.invoke(null, o) : o;
+            Object c = o instanceof IBinder ? asItf.invoke(null, o) : o;
             if (c == null) continue;
             String pkg = (String) find(c.getClass(), "getPackageName", 0).invoke(c);
             if (pkgs.contains(pkg)) out.add(c);
         }
         return out;
+    }
+
+    /** a session that reports a playback state is a real one; null state = an empty shell */
+    private static boolean hasState(Object c) {
+        try {
+            return find(c.getClass(), "getPlaybackState", 0).invoke(c) != null;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static String pkgOf(Object controller, String fallback) {
@@ -196,6 +316,21 @@ public final class MediaTool {
             } catch (Exception ignored) {
             }
         }
+    }
+
+    // --- reflection helpers -------------------------------------------------------------------
+
+    /** a no-argument or one-float method (PlayerProxy.pause/start, setVolume(float)) */
+    private static boolean call(Object o, String name, Object... args) {
+        try {
+            for (Method m : o.getClass().getMethods()) {
+                if (!m.getName().equals(name) || m.getParameterTypes().length != args.length) continue;
+                m.invoke(o, args);
+                return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
     }
 
     private static Object service(String name, String itf) throws Exception {
