@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
  */
 object ScreenCapture {
     private const val TAG = "ScreenCapture"
+    private const val TIMEOUT_MS = 4_000L
     private const val FORMAT_RGBA_8888 = 1
     private const val FORMAT_RGBX_8888 = 2
     private const val DATASPACE_DISPLAY_P3 = 143261696 // STANDARD_DCI_P3 | TRANSFER_SRGB | RANGE_FULL
@@ -29,15 +30,26 @@ object ScreenCapture {
 
     suspend fun capture(): Bitmap = withContext(Dispatchers.IO) {
         val p = try {
-            ProcessBuilder("su", "-c", "/system/bin/screencap").redirectErrorStream(false).start()
+            ProcessBuilder("su", "-c", "/system/bin/screencap")
+                .redirectError(ProcessBuilder.Redirect.DISCARD) // never let an unread stderr pipe fill up
+                .start()
         } catch (e: Exception) {
             throw Failed("无法获取 root：${e.message}")
         }
+        // a hung screencap must not block forever (the read below can't be cancelled): kill it
+        val watchdog = Thread {
+            try {
+                Thread.sleep(TIMEOUT_MS)
+                p.destroyForcibly()
+            } catch (_: InterruptedException) {
+            }
+        }.apply { isDaemon = true; start() }
         val (bytes, n) = try {
             p.outputStream.close()
             readAll(p.inputStream)
         } finally {
-            if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroyForcibly()
+            watchdog.interrupt()
+            if (!p.waitFor(1, TimeUnit.SECONDS)) p.destroyForcibly()
         }
         decode(bytes, n)
     }

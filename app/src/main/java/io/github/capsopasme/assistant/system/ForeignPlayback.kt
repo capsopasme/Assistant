@@ -9,10 +9,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Pauses players that ignore the assistant's audio focus, and resumes exactly those afterwards.
@@ -22,15 +23,16 @@ import kotlinx.coroutines.sync.withLock
  * playing, and the panel (a voice-interaction window) doesn't pause the activity under it either.
  * The video's sound then reaches the microphone and gets recognized as commands.
  *
- * So a moment after taking focus, if music is still playing, a root helper ([io.github.capsopasme
- * .assistant.root.MediaTool]) finds the apps still playing and pauses their own media sessions.
- * Nothing runs when nothing is playing (one AudioManager call), and nothing stays running.
+ * So when something was playing as the assistant took focus, a root helper ([io.github.capsopasme
+ * .assistant.root.MediaTool]) is started right away (its ~0.4 s start-up overlaps the moment
+ * well-behaved players need to pause themselves), finds the apps still playing and pauses their
+ * own media sessions. Until it reports, the panel holds auto-send; if it paused anything, what was
+ * heard meanwhile is the video's sound, not the user, and is dropped.
+ * Nothing runs when nothing was playing, and nothing stays running.
  */
 object ForeignPlayback {
     private const val TAG = "ForeignPlayback"
     private const val TOOL = "io.github.capsopasme.assistant.root.MediaTool"
-    /** time for players that do handle focus to pause by themselves */
-    private const val SETTLE_MS = 300L
     const val MARK = "foreign_pause"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -39,22 +41,33 @@ object ForeignPlayback {
     /** packages we paused and owe a resume */
     private val paused = LinkedHashSet<String>()
 
-    /** called right after the assistant took audio focus */
-    fun onFocusTaken(context: Context) {
+    /** whether anything is playing (call before taking focus: well-behaved players stop right after) */
+    fun musicActive(context: Context): Boolean =
+        context.getSystemService(AudioManager::class.java)?.isMusicActive == true
+
+    /**
+     * Called right after the assistant took audio focus, if [musicActive] was true just before.
+     * [onDone] runs on the main thread with whether an app had to be paused (always called).
+     */
+    fun onFocusTaken(context: Context, onDone: (pausedAny: Boolean) -> Unit) {
         val app = context.applicationContext
         pauseJob?.cancel()
         pauseJob = scope.launch {
-            delay(SETTLE_MS)
-            val am = app.getSystemService(AudioManager::class.java) ?: return@launch
-            if (!am.isMusicActive) return@launch
-            if (RootShell.lastAvailable == false) return@launch
-            mutex.withLock {
-                val out = tool(app, "pause", Process.myUid().toString())
-                val got = out.filter { it.first == "paused" }.map { it.second.substringBefore(' ') }
-                paused.addAll(got)
-                val summary = out.joinToString("；") { "${it.first}=${it.second}" }
-                Log.i(TAG, "pause: $summary")
-                if (summary.isNotEmpty()) Marks.writeText(app, MARK, summary)
+            var any = false
+            try {
+                if (RootShell.lastAvailable != false) mutex.withLock {
+                    val out = tool(app, "pause", Process.myUid().toString())
+                    val got = out.filter { it.first == "paused" }.map { it.second.substringBefore(' ') }
+                    // forget() while the helper ran (user took over / left the app): owe no resume
+                    if (isActive) paused.addAll(got)
+                    any = got.isNotEmpty()
+                    val summary = out.joinToString("；") { "${it.first}=${it.second}" }
+                    Log.i(TAG, "pause: $summary")
+                    if (summary.isNotEmpty()) Marks.writeText(app, MARK, summary)
+                }
+            } finally {
+                val result = any
+                withContext(Dispatchers.Main + kotlinx.coroutines.NonCancellable) { onDone(result) }
             }
         }
     }

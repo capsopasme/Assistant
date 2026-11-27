@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -58,6 +59,16 @@ object OcrLauncher {
                 shot?.recycle()
                 shot = bmp
                 vis.showSession(Bundle().apply { putString(EXTRA_MODE, MODE_OCR) }, 0)
+                // the session normally opens within a frame or two; if the system didn't open it,
+                // say so instead of silently holding a 10 MB screenshot
+                scope.launch {
+                    delay(2_000)
+                    if (shot === bmp) {
+                        shot = null
+                        bmp.recycle()
+                        toast(context, "无法打开识别界面，请重试")
+                    }
+                }
             } catch (e: ScreenCapture.Failed) {
                 toast(context, e.message ?: "截屏失败")
             } catch (e: Exception) {
