@@ -22,19 +22,18 @@ import java.util.Set;
  *
  *  1. the app's media session, if it is a real one (it reports a playback state): pause() there,
  *     then the media button sent to that session only. The app knows it paused.
- *  2. otherwise, or if that didn't stop the sound, the players themselves: every AudioTrack /
+ *  2. otherwise, or if that didn't stop the sound, mute its players: every AudioTrack /
  *     MediaPlayer / AAudio stream is registered with the audio service together with a control
- *     interface (the one the system uses to enforce focus); pause it there. 红果短剧 needs this:
- *     its two sessions are empty shells (no state, no metadata) that ignore every command.
- *  3. if a player won't pause, mute it (system-side volume of that player only), so at least the
- *     microphone doesn't hear it.
+ *     interface (the one the system uses to enforce focus); set that player's volume to 0 there.
+ *     红果短剧 needs this: its two sessions are empty shells (no state, no metadata) that ignore
+ *     every command. Muting rather than pausing the player: a video engine runs on its own clock.
  *
  * Each step prints a resume token, and "resume" undoes exactly those: the same session, the same
  * player ids (never another player of the app, e.g. the next episode it preloaded and keeps paused).
  * The generic media key is never used: it goes to the most recent session, maybe another app.
  *
  *   pause SELF_UID   -> paused=PKG (how) | failed=PKG (why) | none=1, plus resume=TOKEN lines
- *   resume TOKEN...  -> s:PKG (session play) | p:PIID (player start) | m:PIID (unmute); ok=1
+ *   resume TOKEN...  -> s:PKG (session play) | m:PIID (unmute); p:PIID (player start, older); ok=1
  *
  * Root holds MEDIA_CONTENT_CONTROL and MODIFY_AUDIO_ROUTING (the latter is what makes the audio
  * service return the real uids and player interfaces). Pure Java, reflection only.
@@ -108,25 +107,13 @@ public final class MediaTool {
                 }
             }
 
-            // 2. the players themselves
+            // 2. no real session: mute the app's playing players (system-side volume of each
+            //    player only). Not pause: a video engine keeps its own clock, so pausing just the
+            //    audio leaves the picture running and freezes it on resume until the sound catches
+            //    up (seen with 红果). Muted, sound and picture stay in step.
             List<Object> players = activePlayers(uid);
-            List<Integer> paused = new ArrayList<>();
-            for (Object pc : players) {
-                Object proxy = proxyOf(pc);
-                Integer piid = piidOf(pc);
-                if (proxy == null || piid == null) continue;
-                if (call(proxy, "pause")) paused.add(piid);
-            }
-            if (!paused.isEmpty() && stoppedAfter(uid, 300)) {
-                for (int piid : paused) System.out.println("resume=p:" + piid);
-                System.out.println("paused=" + pkg + " (player)");
-                continue;
-            }
-
-            // 3. still audible: mute what is still playing (and resume what did pause)
-            for (int piid : paused) System.out.println("resume=p:" + piid);
             int muted = 0;
-            for (Object pc : activePlayers(uid)) {
+            for (Object pc : players) {
                 Object proxy = proxyOf(pc);
                 Integer piid = piidOf(pc);
                 if (proxy == null || piid == null) continue;
@@ -136,7 +123,7 @@ public final class MediaTool {
                 }
             }
             if (muted > 0) System.out.println("paused=" + pkg + " (muted)");
-            else System.out.println("failed=" + pkg + (players.isEmpty() ? " (no player interface)" : " (still playing)"));
+            else System.out.println("failed=" + pkg + (players.isEmpty() ? " (no player interface)" : " (could not mute)"));
         }
         return 0;
     }
