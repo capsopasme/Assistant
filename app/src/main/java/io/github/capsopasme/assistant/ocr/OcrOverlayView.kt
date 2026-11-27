@@ -91,6 +91,7 @@ class OcrOverlayView(context: Context, private val shot: Bitmap) : View(context)
     private var tScan = -1L
     private var tReveal = -1L
     private var tClose = -1L
+    private var copied = false
     private var closedSent = false
     private var pill: String? = null
     private var tPill = -1L
@@ -135,6 +136,7 @@ class OcrOverlayView(context: Context, private val shot: Bitmap) : View(context)
 
     /** highlights the copied blocks and shows what was copied, then closes */
     fun showCopied(indices: Collection<Int>, message: String, wave: Boolean) {
+        copied = true // no second copy while it fades out
         val t = now()
         indices.forEachIndexed { k, i -> blocks.getOrNull(i)?.let { if (it.tSel < 0) it.tSel = t + if (wave) min(k * 22L, 300L) else 0L } }
         performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -149,6 +151,12 @@ class OcrOverlayView(context: Context, private val shot: Bitmap) : View(context)
     }
 
     // --- geometry ---------------------------------------------------------------------------
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // rotated (or resized) while open: the frozen frame no longer matches the screen
+        if (oldw > 0 && oldh > 0 && (w > h) != (oldw > oldh)) listener?.onDismiss()
+    }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
@@ -195,7 +203,7 @@ class OcrOverlayView(context: Context, private val shot: Bitmap) : View(context)
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (tClose >= 0) return true
+        if (tClose >= 0 || copied) return true
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y

@@ -117,6 +117,9 @@ class PanelController(
     private var lastRequestByVoice = false
     private var keyboardMode = false
     private var focusRequest: AudioFocusRequest? = null
+    /** a foreign player is being checked / paused: hold auto-send (see ForeignPlayback) */
+    private var foreignCheck = false
+    private var foreignGen = 0
     private val partialColor by lazy { MaterialColors.getColor(input, com.google.android.material.R.attr.colorOnSurfaceVariant) }
 
     private val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
@@ -379,7 +382,7 @@ class PanelController(
      */
     private fun maybeAutoSend() {
         if (!prefs.autoSend || keyboardMode || disposed || heard.isBlank() || !VoiceInput.isListening ||
-            work?.isActive == true
+            work?.isActive == true || foreignCheck
         ) return
         val now = SystemClock.elapsedRealtime()
         val wait = when {
@@ -436,10 +439,25 @@ class PanelController(
             )
             .setOnAudioFocusChangeListener { }
             .build()
+        val wasPlaying = ForeignPlayback.musicActive(context)
         if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             focusRequest = req
-            // players that ignore the focus loss (红果短剧) are paused through their own session
-            ForeignPlayback.onFocusTaken(context)
+            // players that ignore the focus loss (红果短剧) are paused through their own session;
+            // until that's settled, what the microphone hears may be the video, so don't auto-send
+            if (wasPlaying) {
+                foreignCheck = true
+                val gen = ++foreignGen
+                ForeignPlayback.onFocusTaken(context) { pausedAny ->
+                    if (gen != foreignGen) return@onFocusTaken // a newer check replaced this one
+                    foreignCheck = false
+                    if (!disposed && pausedAny && work?.isActive != true) {
+                        heard = ""
+                        heardIsCommand = false
+                        if (VoiceInput.isListening) showHeard("")
+                    }
+                    if (!disposed) maybeAutoSend()
+                }
+            }
         }
     }
 

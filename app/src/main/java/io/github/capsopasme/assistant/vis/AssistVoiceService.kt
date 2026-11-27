@@ -106,7 +106,11 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
         val ocrMode = args?.getString(OcrLauncher.EXTRA_MODE) == OcrLauncher.MODE_OCR
         window?.window?.let { w ->
             WindowCompat.setDecorFitsSystemWindows(w, false)
-            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+            // OCR: never resize for a keyboard (the frozen frame must keep its size)
+            w.setSoftInputMode(
+                (if (ocrMode) WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING else WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                    or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
+            )
             w.statusBarColor = Color.TRANSPARENT
             w.navigationBarColor = Color.TRANSPARENT
             w.isNavigationBarContrastEnforced = false
@@ -116,6 +120,8 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
                 layoutInDisplayCutoutMode = if (ocrMode) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
                 else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
             }
+            // over the darkened frame the status bar icons must be light
+            if (ocrMode) WindowCompat.getInsetsController(w, w.decorView).isAppearanceLightStatusBars = false
         }
         if (ocrMode) showOcr() else showPanel()
     }

@@ -66,6 +66,9 @@ public final class MediaTool {
     }
 
     private static int pause(int selfUid) throws Exception {
+        // started the moment the assistant took focus: give players that handle focus loss a beat
+        // to pause by themselves (this process's own start-up already took most of it)
+        SystemClock.sleep(150);
         Set<Integer> uids = playingUids(selfUid);
         if (uids.isEmpty()) {
             System.out.println("none=1");
@@ -152,16 +155,21 @@ public final class MediaTool {
         }
     }
 
-    /** pause(String) / play(String) on newer systems, no-argument versions on older ones */
+    /**
+     * pause(String) / play(String) on newer systems, no-argument versions on older ones. The string
+     * is the caller's package, informational in AOSP; should a ROM check it, retry as "android".
+     */
     private static boolean invoke(Object c, String name, String caller) {
-        try {
-            Method m = findOrNull(c.getClass(), name, 1);
-            if (m != null) m.invoke(c, caller);
-            else find(c.getClass(), name, 0).invoke(c);
-            return true;
-        } catch (Exception e) {
-            return false;
+        for (String who : new String[]{caller, "android"}) {
+            try {
+                Method m = findOrNull(c.getClass(), name, 1);
+                if (m != null) m.invoke(c, who);
+                else find(c.getClass(), name, 0).invoke(c);
+                return true;
+            } catch (Exception ignored) {
+            }
         }
+        return false;
     }
 
     /** sendMediaButton / dispatchMediaButton: parameters differ by version, filled by type */
