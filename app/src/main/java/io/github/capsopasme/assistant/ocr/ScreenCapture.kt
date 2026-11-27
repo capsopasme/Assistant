@@ -30,9 +30,8 @@ object ScreenCapture {
 
     suspend fun capture(): Bitmap = withContext(Dispatchers.IO) {
         val p = try {
-            ProcessBuilder("su", "-c", "/system/bin/screencap")
-                .redirectError(ProcessBuilder.Redirect.DISCARD) // never let an unread stderr pipe fill up
-                .start()
+            // stderr goes to /dev/null: an unread stderr pipe must never fill up and block screencap
+            ProcessBuilder("su", "-c", "/system/bin/screencap 2>/dev/null").start()
         } catch (e: Exception) {
             throw Failed("无法获取 root：${e.message}")
         }
