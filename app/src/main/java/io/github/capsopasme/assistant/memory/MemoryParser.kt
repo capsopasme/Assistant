@@ -39,20 +39,20 @@ object MemoryParser {
         REMEMBER.find(t)?.let { m ->
             val content = m.groupValues[1].replace(EDGE, "")
             // "记得我的车位在哪吗" is a question, not something to store
-            if (content.isEmpty() || QUESTION.containsMatchIn(content) && isQuestion(content)) return Recall(content)
-            return Remember(subjectOf(content), content)
+            if (content.isEmpty() || QUESTION.containsMatchIn(content) && isQuestion(content)) return MemoryCommand.Recall(content)
+            return MemoryCommand.Remember(subjectOf(content), content)
         }
         FORGET.find(t)?.let { m ->
             var q = m.groupValues[1].replace(EDGE, "")
             q = q.removeSuffix("这条记忆").removeSuffix("的记忆").removeSuffix("记忆").removeSuffix("这件事").removeSuffix("吧")
             q = q.removePrefix("我的").removePrefix("关于").removePrefix("那个")
             // "忘了车停哪了" is someone asking, not an instruction
-            if (isQuestion(q)) return Recall(q)
-            if (q in ALL) return Forget("", all = true)
-            return Forget(q)
+            if (isQuestion(q)) return MemoryCommand.Recall(q)
+            if (q in ALL) return MemoryCommand.Forget("", all = true)
+            return MemoryCommand.Forget(q)
         }
         // "车停哪了" / "我的车位在哪": only answered locally if a stored memory matches well
-        if (isQuestion(t) && t.length <= 24 && !NOT_PERSONAL.containsMatchIn(t)) return Recall(t)
+        if (isQuestion(t) && t.length <= 24 && !NOT_PERSONAL.containsMatchIn(t)) return MemoryCommand.Recall(t)
         return null
     }
 

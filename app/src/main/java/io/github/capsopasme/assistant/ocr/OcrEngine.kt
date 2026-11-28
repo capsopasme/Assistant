@@ -214,7 +214,9 @@ object OcrEngine {
         for (i in 0 until boxes.size * 3 * plane) buf.put(i, 0f) // padding = 0 after normalization, like PaddleOCR
         // same colour space as the screenshot: drawing into it copies pixels without converting them
         val cs = shot.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)
-        val line = Bitmap.createBitmap(width, REC_H, Bitmap.Config.ARGB_8888, true, cs)
+        // (a shared photo may carry a profile a bitmap can't be created in: then plain sRGB)
+        val line = runCatching { Bitmap.createBitmap(width, REC_H, Bitmap.Config.ARGB_8888, true, cs) }
+            .getOrElse { Bitmap.createBitmap(width, REC_H, Bitmap.Config.ARGB_8888) }
         val canvas = Canvas(line)
         val stride = line.rowBytes
         val raw = ByteBuffer.allocateDirect(stride * REC_H)
