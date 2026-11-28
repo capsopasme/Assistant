@@ -55,11 +55,25 @@ class PanelActivity : AppCompatActivity(), PanelHost {
             })
         }
         panel.onShown()
+        if (intent.getBooleanExtra(EXTRA_SHARE, false)) panel.takeInbox()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         panel.onShown()
+        if (intent.getBooleanExtra(EXTRA_SHARE, false)) panel.takeInbox()
+    }
+
+    override suspend fun captureScreen(): android.graphics.Bitmap {
+        // the activity's window dims what's behind it: off while the screenshot is taken
+        val dim = android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND
+        val dimmed = window.attributes.flags and dim != 0
+        if (dimmed) window.clearFlags(dim)
+        return try {
+            io.github.capsopasme.assistant.screen.captureBehind(window.decorView)
+        } finally {
+            if (dimmed) window.addFlags(dim)
+        }
     }
 
     override fun onStop() {
@@ -93,5 +107,7 @@ class PanelActivity : AppCompatActivity(), PanelHost {
 
     companion object {
         const val EXTRA_SOURCE = "source"
+        /** opened by ShareActivity: pick up the shared files */
+        const val EXTRA_SHARE = "share"
     }
 }

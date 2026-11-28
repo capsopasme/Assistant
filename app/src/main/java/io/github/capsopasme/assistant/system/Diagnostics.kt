@@ -27,6 +27,7 @@ object Diagnostics {
         Marks.readText(context, ForeignPlayback.MARK).takeIf { it.isNotEmpty() }?.let {
             out.append("最近一次暂停不响应音频焦点的应用：").append(it).append('\n')
         }
+        out.append("最近一次识别屏幕文字：").append(io.github.capsopasme.assistant.ocr.OcrStats.summary()).append('\n')
         out.append("现在：").append(fmt.format(Date())).append("\n\n")
 
         if (!RootShell.available()) {

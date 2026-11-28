@@ -42,7 +42,19 @@ import io.github.capsopasme.assistant.action.ActionResult
 import io.github.capsopasme.assistant.action.AppIndex
 import io.github.capsopasme.assistant.action.PermissionGate
 import io.github.capsopasme.assistant.action.SwitchTarget
+import android.app.KeyguardManager
 import io.github.capsopasme.assistant.llm.Agent
+import io.github.capsopasme.assistant.llm.ScreenSource
+import io.github.capsopasme.assistant.memory.MemoryCommand
+import io.github.capsopasme.assistant.memory.MemoryParser
+import io.github.capsopasme.assistant.memory.MemoryStore
+import io.github.capsopasme.assistant.ocr.OcrEngine
+import io.github.capsopasme.assistant.screen.ScreenContent
+import io.github.capsopasme.assistant.screen.ScreenIntent
+import io.github.capsopasme.assistant.share.Attachments
+import io.github.capsopasme.assistant.share.Inbox
+import io.github.capsopasme.assistant.util.Feedback
+import kotlinx.coroutines.withContext
 import io.github.capsopasme.assistant.llm.LlmClient
 import io.github.capsopasme.assistant.llm.LlmException
 import io.github.capsopasme.assistant.parse.LocalParser
@@ -68,6 +80,8 @@ interface PanelHost {
     fun close()
     /** Asks the user for runtime permissions. */
     suspend fun requestPermissions(permissions: Array<String>): Boolean
+    /** A screenshot of what is under the panel (the panel hidden for a moment). */
+    suspend fun captureScreen(): android.graphics.Bitmap
 }
 
 /**
@@ -120,6 +134,12 @@ class PanelController(
     /** a foreign player is being checked / paused: hold auto-send (see ForeignPlayback) */
     private var foreignCheck = false
     private var foreignGen = 0
+    /** shared files being read (see [takeInbox]); a request waits for it */
+    private var extractJob: Job? = null
+    /** the screen was looked at during this showing of the panel */
+    private var lookedThisTime = false
+    private val screenSource: ScreenSource = { capture(pin = false) }
+
     private val partialColor by lazy { MaterialColors.getColor(input, com.google.android.material.R.attr.colorOnSurfaceVariant) }
 
     private val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
@@ -194,6 +214,110 @@ class PanelController(
         } else retained = false
         // build the app list in the background so "打开…" is instant
         host.scope.launch(Dispatchers.Default) { runCatching { AppIndex.apps(context.applicationContext) } }
+        Feedback.prepare(context)
+        // a screen pinned a while ago belongs to another moment
+        agent.dropScreenOlderThan(SCREEN_REUSE_MS)
+    }
+
+    // --- shared files, the screen -------------------------------------------------------------
+
+    /** Picks up what was shared to the assistant ([ShareActivity]) and reads it for the model. */
+    fun takeInbox() {
+        val (files, text) = Inbox.take() ?: return
+        autoCloseJob?.cancel()
+        val names = files.map { it.name } + listOfNotNull(text?.let { "分享的文字" })
+        addBubble("📎 " + MemoryParser.short(names.joinToString("、"), 60), user = true)
+        setStatus("正在读取…")
+        val withImages = prefs.screenImage && prefs.provider.supportsImages
+        extractJob?.cancel()
+        extractJob = host.scope.launch {
+            val list = try {
+                Attachments.extract(context.applicationContext, files, text, withImages)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                addBubble("读取失败：${e.message ?: e.javaClass.simpleName}", error = true)
+                emptyList()
+            }
+            if (list.isEmpty()) { setStatus(null); return@launch }
+            if (list.any { it.usable }) agent.pinFiles(list)
+            if (work?.isActive != true) setStatus(null)
+            addBubble(list.joinToString("\n") { "${it.name}：${it.note}" }, error = list.none { it.usable })
+        }
+    }
+
+    /** "问助手" from the OCR view: what was on screen becomes the conversation's context. */
+    fun attachScreen(content: ScreenContent) {
+        agent.pinScreen(content)
+        lookedThisTime = true
+        addBubble(if (content.text != null) "已带上屏幕内容（${content.text.length} 字），想问什么？" else "已带上屏幕截图，想问什么？")
+    }
+
+    /**
+     * Looks at the screen under the panel: screenshot (the panel blinks out for it), OCR and a JPEG.
+     * [pin]: keep it as the conversation's screen (asked directly); the read_screen tool doesn't.
+     */
+    private suspend fun capture(pin: Boolean): ScreenContent? {
+        if (context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true) {
+            addBubble("锁屏时不能看屏幕", error = true)
+            return null
+        }
+        setStatus("正在看屏幕…")
+        val imeShown = ViewCompat.getRootWindowInsets(input)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (imeShown) { hideKeyboard(); delay(320) }
+        OcrEngine.preload(context)
+        val shot = try {
+            host.captureScreen()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            setStatus(null)
+            addBubble("截屏失败：${e.message ?: e.javaClass.simpleName}", error = true)
+            return null
+        }
+        return try {
+            val c = ScreenContent.from(context, shot, prefs.screenImage && prefs.provider.supportsImages)
+            lookedThisTime = true
+            if (pin) agent.pinScreen(c)
+            if (c.black) addBubble("这个页面禁止截屏（例如密码、支付页面），看不到内容", error = true)
+            c
+        } finally {
+            shot.recycle()
+            OcrEngine.scheduleRelease(context)
+            setStatus("思考中…")
+        }
+    }
+
+    // --- memory ---------------------------------------------------------------------------------
+
+    /** @return null: not a memory command (or nothing matched locally), let the request go on */
+    private suspend fun memoryCommand(text: String): Boolean? {
+        val cmd = MemoryParser.parse(text) ?: return null
+        val store = MemoryStore.get(context)
+        return when (cmd) {
+            is MemoryCommand.Remember -> {
+                if (MemoryParser.looksSecret(cmd.content)) {
+                    return finishWith(listOf(ActionResult(false, "密码、卡号、证件号这类不记在助手里：会以明文存在手机上，提问时还会发给大模型")), null)
+                }
+                val (_, old) = withContext(Dispatchers.IO) { store.remember(cmd.subject, cmd.content) }
+                val replaced = if (old != null && old.content != cmd.content) "（替换了之前的「${MemoryParser.short(old.content, 24)}」）" else ""
+                return finishWith(listOf(ActionResult(true, "记住了：${cmd.content}$replaced")), null)
+            }
+            is MemoryCommand.Forget -> {
+                if (cmd.all) {
+                    val n = withContext(Dispatchers.IO) { store.clear() }
+                    return finishWith(listOf(ActionResult(n > 0, if (n > 0) "已清空全部 $n 条记忆" else "还没有记住任何事")), null)
+                }
+                val gone = withContext(Dispatchers.IO) { store.forget(cmd.query) }
+                if (gone.isEmpty()) return null // the model sees the list and may know what was meant
+                return finishWith(listOf(ActionResult(true, "已忘掉：" + gone.joinToString("；") { MemoryParser.short(it.content, 30) })), null)
+            }
+            is MemoryCommand.Recall -> {
+                val (m, score) = withContext(Dispatchers.IO) { store.best(cmd.query) } ?: return null
+                if (score < MemoryParser.RECALL_MIN) return null
+                return finishWith(emptyList(), "${m.content}（${m.whenText()}记的）")
+            }
+        }
     }
 
     /** Called every time the panel is (re)shown. */
@@ -513,12 +637,19 @@ class PanelController(
 
     /** @return listen again for a follow-up */
     private suspend fun handleRequest(text: String): Boolean {
+        memoryCommand(text)?.let { return it }
         val local = LocalParser.parse(text, nowMinutes())
         if (local != null) {
             setStatus("正在执行…")
             val result = executor.execute(local)
             setStatus(null)
             if (!result.fallbackToModel) return finishWith(listOf(result), null)
+        }
+        // "看看屏幕" / "这段什么意思": the screen, unless the user shared files to talk about
+        val aboutScreen = ScreenIntent.matches(text) && (!agent.hasFiles || Regex("屏幕|页面|界面").containsMatchIn(text))
+        if (aboutScreen && (agent.pinnedScreen == null || !lookedThisTime || ScreenIntent.wantsFresh(text))) {
+            if (prefs.apiKey(prefs.provider).isBlank() || !online()) return askModel(text) // explains what's missing
+            capture(pin = true) ?: run { setStatus(null); return false }
         }
         return askModel(text)
     }
@@ -533,9 +664,12 @@ class PanelController(
             addBubble("没有网络连接。", error = true)
             return false
         }
+        extractJob?.let { job ->
+            if (job.isActive) { setStatus("正在读取文件…"); job.join() }
+        }
         setStatus("思考中…")
         return try {
-            val outcome = agent.run(text) { step -> root.post { setStatus("正在$step…") } }
+            val outcome = agent.run(text, screenSource) { step -> root.post { setStatus("正在$step…") } }
             setStatus(null)
             finishWith(outcome.results, outcome.text)
         } catch (e: CancellationException) {
@@ -565,6 +699,11 @@ class PanelController(
             for (r in results) addBubble(r.message, error = !r.ok)
         }
         if (answer != null) addBubble(answer)
+        // something was done on the phone: chime + tick; a failure: a different tick, no sound
+        when {
+            allOk -> Feedback.success(context, card)
+            results.any { !it.ok } -> Feedback.failure(context, card)
+        }
         when {
             // another app is in front now: the panel's job is done
             leftApp && allOk -> host.close()
@@ -659,5 +798,7 @@ class PanelController(
         private const val LOUD_LEVEL = 0.25f
         /** talking that isn't recognized as speech holds the send back at most this long */
         private const val LOUD_HOLD_MAX_MS = 2_000L
+        /** a screen looked at longer ago than this is not reused for a new showing of the panel */
+        private const val SCREEN_REUSE_MS = 120_000L
     }
 }

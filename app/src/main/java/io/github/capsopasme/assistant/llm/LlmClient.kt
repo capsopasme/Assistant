@@ -32,11 +32,11 @@ class LlmClient(
     private val model: String,
     private val baseUrl: String,
 ) {
-    suspend fun chat(messages: JSONArray, tools: JSONArray?): LlmReply {
+    suspend fun chat(messages: JSONArray, tools: JSONArray?, maxTokens: Int = 1024): LlmReply {
         if (apiKey.isBlank()) throw LlmException("还没有填写 ${provider.label} 的 API Key（在设置里填写）")
         val extrasKey = "${provider.id}/$model"
         val useExtras = extrasKey !in extrasRejected
-        val body = buildBody(messages, tools, useExtras)
+        val body = buildBody(messages, tools, useExtras, maxTokens)
         val (code, text) = try {
             postWithRetry("$baseUrl/chat/completions", body)
         } catch (e: IOException) {
@@ -50,7 +50,7 @@ class LlmClient(
         ) {
             extrasRejected += extrasKey
             val (code2, text2) = try {
-                postWithRetry("$baseUrl/chat/completions", buildBody(messages, tools, false))
+                postWithRetry("$baseUrl/chat/completions", buildBody(messages, tools, false, maxTokens))
             } catch (e: IOException) {
                 throw LlmException(networkMessage(e), e)
             }
@@ -74,7 +74,7 @@ class LlmClient(
             .filter { it.isNotEmpty() }.sorted()
     }
 
-    private fun buildBody(messages: JSONArray, tools: JSONArray?, extras: Boolean) = JSONObject().apply {
+    private fun buildBody(messages: JSONArray, tools: JSONArray?, extras: Boolean, maxTokens: Int) = JSONObject().apply {
         put("model", model)
         put("messages", messages)
         if (tools != null && tools.length() > 0) {
@@ -82,7 +82,7 @@ class LlmClient(
             put("tool_choice", "auto")
         }
         put("temperature", 0.3)
-        put("max_tokens", 1024)
+        put("max_tokens", maxTokens)
         put("stream", false)
         if (extras) provider.addExtras(this)
     }
@@ -137,7 +137,7 @@ class LlmClient(
             io.execute {
                 try {
                     conn.connectTimeout = 10_000
-                    conn.readTimeout = 45_000
+                    conn.readTimeout = 90_000
                     conn.useCaches = false
                     conn.setRequestProperty("Authorization", "Bearer $apiKey")
                     conn.setRequestProperty("Accept", "application/json")

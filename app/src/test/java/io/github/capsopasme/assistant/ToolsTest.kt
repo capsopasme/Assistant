@@ -38,7 +38,7 @@ class ToolsTest {
 
     @Test fun specsAreValid() {
         val specs = Tools.specs
-        assertEquals(12, specs.length())
+        assertEquals(15, specs.length())
         for (i in 0 until specs.length()) {
             val f = specs.getJSONObject(i).getJSONObject("function")
             assertTrue(f.getString("name").matches(Regex("[a-z_]+")))

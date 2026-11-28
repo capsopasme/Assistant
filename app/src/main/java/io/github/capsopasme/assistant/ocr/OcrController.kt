@@ -6,7 +6,17 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import android.view.ViewGroup
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
+import android.widget.FrameLayout
+import android.widget.TextView
 import io.github.capsopasme.assistant.panel.PanelHost
+import io.github.capsopasme.assistant.screen.ScreenContent
+import io.github.capsopasme.assistant.util.Prefs
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,6 +34,8 @@ class OcrController(
     root: ViewGroup,
     private val shot: Bitmap,
     private val host: PanelHost,
+    /** "问助手": continue in the panel with what's on screen */
+    private val onAsk: ((ScreenContent) -> Unit)? = null,
 ) {
     private val view = OcrOverlayView(context, shot)
     private var blocks: List<Block> = emptyList()
@@ -33,8 +45,11 @@ class OcrController(
     private var job: Job? = null
     private var disposed = false
 
+    private var askChip: TextView? = null
+
     init {
         root.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (onAsk != null) askChip = addAskChip(root)
         view.listener = object : OcrOverlayView.Listener {
             override fun onCopy(blocks: List<Int>, all: Boolean) = copy(blocks, all)
             override fun onDismiss() = view.close()
@@ -50,7 +65,7 @@ class OcrController(
             val found = OcrEngine.detect(context, shot)
             view.scanningDone()
             if (found.isEmpty()) {
-                view.showMessage("没有识别到文字")
+                view.showMessage(if (OcrEngine.lastAllBlack) "这个页面禁止截屏（例如密码、支付页面）" else "没有识别到文字")
                 delay(1300)
                 view.close()
                 return
@@ -59,6 +74,7 @@ class OcrController(
             texts = MutableList(found.size) { null }
             blockText = arrayOfNulls(blocks.size)
             view.setBlocks(blocks.map { it.box }, hint())
+            askChip?.let { chip -> chip.visibility = View.VISIBLE; chip.animate().alpha(1f).setDuration(180).start() }
             // recognize in reading order, so the blocks at the top are ready first
             val order = blocks.flatMap { it.parts }
             OcrEngine.recognize(context, shot, order.map { found[it] }) { start, res ->
@@ -125,6 +141,49 @@ class OcrController(
         return "点按复制 · 长按复制全部 · 划过多段一起复制"
     }
 
+    /** a small "问助手" pill in the top right corner, below the status bar */
+    private fun addAskChip(root: ViewGroup): TextView {
+        val dp = context.resources.displayMetrics.density
+        val chip = TextView(context).apply {
+            text = "问助手"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding((14 * dp).toInt(), (7 * dp).toInt(), (14 * dp).toInt(), (7 * dp).toInt())
+            background = GradientDrawable().apply { cornerRadius = 18 * dp; setColor(0xCC2B2B2B.toInt()); setStroke((1 * dp).toInt(), 0x55FFFFFF) }
+            alpha = 0f
+            visibility = View.GONE
+            isClickable = true
+            setOnClickListener { ask() }
+        }
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END)
+        root.addView(chip, lp)
+        chip.setOnApplyWindowInsetsListener { v, insets ->
+            val top = insets.getInsets(WindowInsets.Type.statusBars()).top
+            (v.layoutParams as FrameLayout.LayoutParams).apply { topMargin = top + (10 * dp).toInt(); marginEnd = (14 * dp).toInt() }
+            v.requestLayout()
+            insets
+        }
+        return chip
+    }
+
+    private var asking = false
+    private var askJob: Job? = null
+
+    /** everything recognized so far (waits briefly for the rest) plus the frozen frame */
+    private fun ask() {
+        val cb = onAsk ?: return
+        if (asking || disposed) return
+        asking = true
+        view.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+        askJob = host.scope.launch {
+            withTimeoutOrNull(3_000) { while (!disposed && blockText.any { it == null }) delay(50) }
+            if (disposed) return@launch
+            val text = blockText.filterNotNull().filter { it.isNotBlank() }.joinToString("\n")
+            val content = ScreenContent.fromText(text, shot, Prefs.get(context).screenImage && Prefs.get(context).provider.supportsImages)
+            if (!disposed) cb(content)
+        }
+    }
+
     /** triggered again while open: close (the same as tapping outside) */
     fun closeAnimated() = view.close()
 
@@ -135,9 +194,11 @@ class OcrController(
         val j = job
         j?.cancel()
         (view.parent as? ViewGroup)?.removeView(view)
-        // the screenshot may still be in use by a recognition step finishing on the OCR thread
-        OcrLauncher.recycleAfter(j, shot)
-        OcrEngine.scheduleRelease()
+        askChip?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        // the screenshot may still be in use by a recognition step finishing on the OCR thread,
+        // or by "问助手" encoding it
+        OcrLauncher.recycleAfter(listOfNotNull(j, askJob), shot)
+        OcrEngine.scheduleRelease(context)
     }
 
     companion object {

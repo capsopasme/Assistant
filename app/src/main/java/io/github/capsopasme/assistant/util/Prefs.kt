@@ -36,6 +36,14 @@ class Prefs(context: Context) {
     val aliases: String get() = sp.getString(KEY_ALIASES, "") ?: ""
     val keepAssistant get() = sp.getBoolean(KEY_KEEP_ASSISTANT, true)
     val keepAlive get() = sp.getBoolean(KEY_KEEP_ALIVE, true)
+    /** chime after a request that did something on the phone */
+    val feedbackSound get() = sp.getBoolean(KEY_FEEDBACK_SOUND, true)
+    /** haptic tick on success, a different one on failure */
+    val feedbackHaptic get() = sp.getBoolean(KEY_FEEDBACK_HAPTIC, true)
+    /** how long the OCR models stay loaded after use */
+    val ocrKeepMs: Long get() = sp.getString(KEY_OCR_KEEP, null)?.toLongOrNull()?.coerceIn(30_000, 3_600_000) ?: 180_000L
+    /** "看屏幕": also send the screenshot itself to the model (DeepSeek reads images), not only the OCR text */
+    val screenImage get() = sp.getBoolean(KEY_SCREEN_IMAGE, true)
     /** The user generated ChgCtl's icon.conf once: keep it current after boots / SystemUI updates. */
     var chargeIconSetup: Boolean
         get() = sp.getBoolean(KEY_CHARGE_ICON_SETUP, false)
@@ -52,6 +60,10 @@ class Prefs(context: Context) {
         const val KEY_KEEP_ASSISTANT = "keep_assistant"
         const val KEY_KEEP_ALIVE = "keep_alive"
         const val KEY_CHARGE_ICON_SETUP = "charge_icon_setup"
+        const val KEY_FEEDBACK_SOUND = "feedback_sound"
+        const val KEY_FEEDBACK_HAPTIC = "feedback_haptic"
+        const val KEY_OCR_KEEP = "ocr_keep_ms"
+        const val KEY_SCREEN_IMAGE = "screen_image"
 
         const val MAP_COMAPS = "comaps"
         const val MAP_AMAP = "amap"

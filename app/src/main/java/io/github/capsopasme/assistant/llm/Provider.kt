@@ -24,6 +24,9 @@ enum class Provider(
     val modelPref get() = "model_$id"
     val urlPref get() = "url_$id"
 
+    /** reads images in messages (deepseek-flash does; GLM's flash model doesn't) */
+    val supportsImages: Boolean get() = this == DEEPSEEK || this == GEMINI
+
     fun addExtras(body: JSONObject) {
         when (this) {
             DEEPSEEK, GLM -> body.put("thinking", JSONObject().put("type", "disabled"))

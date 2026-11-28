@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import io.github.capsopasme.assistant.vis.AssistSession
 import io.github.capsopasme.assistant.vis.AssistVoiceService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,10 +53,17 @@ object OcrLauncher {
             return
         }
         busy = true
+        OcrStats.at = System.currentTimeMillis()
+        OcrStats.warm = OcrEngine.loaded
+        OcrStats.loadMs = -1; OcrStats.detectMs = -1; OcrStats.firstChunkMs = -1; OcrStats.recognizeMs = -1
         OcrEngine.preload(context)
         scope.launch {
             try {
-                val bmp = ScreenCapture.capture()
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                // the assistant panel is open: take the screen under it, not the panel
+                val session = AssistSession.active?.takeIf { it.showsPanel }
+                val bmp = session?.captureScreen() ?: ScreenCapture.capture()
+                OcrStats.captureMs = android.os.SystemClock.elapsedRealtime() - t0
                 shot?.recycle()
                 shot = bmp
                 vis.showSession(Bundle().apply { putString(EXTRA_MODE, MODE_OCR) }, 0)
@@ -87,10 +95,10 @@ object OcrLauncher {
         return s
     }
 
-    /** recycles [bmp] once [job] has really finished (it may be mid-way through a model step) */
-    fun recycleAfter(job: Job?, bmp: Bitmap) {
+    /** recycles [bmp] once [jobs] have really finished (one may be mid-way through a model step) */
+    fun recycleAfter(jobs: List<Job>, bmp: Bitmap) {
         scope.launch {
-            job?.join()
+            for (j in jobs) j.join()
             if (!bmp.isRecycled) bmp.recycle()
         }
     }
