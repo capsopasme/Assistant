@@ -57,4 +57,16 @@
         <item>30</item>
         <item>60</item>
     </string-array>
+    <string-array name="ocr_keep_labels">
+        <item>1 分钟（最省内存）</item>
+        <item>3 分钟</item>
+        <item>10 分钟</item>
+        <item>1 小时（连续使用更快，约多占 100 MB 内存）</item>
+    </string-array>
+    <string-array name="ocr_keep_values">
+        <item>60000</item>
+        <item>180000</item>
+        <item>600000</item>
+        <item>3600000</item>
+    </string-array>
 </resources>

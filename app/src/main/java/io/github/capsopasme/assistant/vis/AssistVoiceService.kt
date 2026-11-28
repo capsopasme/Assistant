@@ -26,6 +26,10 @@ import io.github.capsopasme.assistant.system.AssistantSetup
 import io.github.capsopasme.assistant.system.KeepAliveService
 import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
+import io.github.capsopasme.assistant.screen.ScreenContent
+import io.github.capsopasme.assistant.screen.captureBehind
+import io.github.capsopasme.assistant.share.ShareActivity
+import android.graphics.Bitmap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -101,9 +105,17 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
     /** What the window shows is decided per show: the panel (power key) or OCR (status bar gesture). */
     override fun onCreateContentView(): View = FrameLayout(context).also { root = it }
 
+    /** the panel is showing (not OCR) */
+    val showsPanel: Boolean get() = panel != null && !closing
+
+    /** a screenshot of what is under this window (the window hidden for a moment) */
+    override suspend fun captureScreen(): Bitmap = captureBehind(window?.window?.decorView)
+
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
-        val ocrMode = args?.getString(OcrLauncher.EXTRA_MODE) == OcrLauncher.MODE_OCR
+        active = this
+        val mode = args?.getString(OcrLauncher.EXTRA_MODE)
+        val ocrMode = mode == OcrLauncher.MODE_OCR
         window?.window?.let { w ->
             WindowCompat.setDecorFitsSystemWindows(w, false)
             // OCR: never resize for a keyboard (the frozen frame must keep its size)
@@ -123,7 +135,21 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
             // over the darkened frame the status bar icons must be light
             if (ocrMode) WindowCompat.getInsetsController(w, w.decorView).isAppearanceLightStatusBars = false
         }
-        if (ocrMode) showOcr() else showPanel()
+        if (ocrMode) showOcr() else {
+            showPanel()
+            if (mode == ShareActivity.MODE_SHARE) panel?.takeInbox()
+        }
+    }
+
+    /** "问助手" in the OCR view: the panel takes over, with what was on screen */
+    private fun switchToPanel(content: ScreenContent) {
+        if (closing) return
+        window?.window?.let { w ->
+            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
+            w.attributes = w.attributes.apply { layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT }
+        }
+        showPanel()
+        panel?.attachScreen(content)
     }
 
     private fun showPanel() {
@@ -155,7 +181,7 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
         panel = null
         ocr?.dispose()
         host.removeAllViews()
-        ocr = OcrController(ContextThemeWrapper(context, R.style.Theme_Assistant), host, shot, this)
+        ocr = OcrController(ContextThemeWrapper(context, R.style.Theme_Assistant), host, shot, this) { switchToPanel(it) }
     }
 
     override fun onHide() {
@@ -167,6 +193,7 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
     override fun close() {
         if (closing) return
         closing = true
+        if (active === this) active = null
         panel?.dispose()
         ocr?.dispose()
         scope.cancel()
@@ -174,6 +201,7 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
     }
 
     override fun onDestroy() {
+        if (active === this) active = null
         panel?.dispose()
         ocr?.dispose()
         scope.cancel()
@@ -198,6 +226,12 @@ class AssistSession(service: AssistSessionService) : VoiceInteractionSession(ser
 
     override fun onHandleAssist(state: AssistState) {}
     override fun onHandleScreenshot(screenshot: android.graphics.Bitmap?) {}
+
+    companion object {
+        /** the session on screen right now, if any */
+        @Volatile var active: AssistSession? = null
+            private set
+    }
 }
 
 /**

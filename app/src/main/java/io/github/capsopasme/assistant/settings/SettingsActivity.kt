@@ -33,7 +33,10 @@ import io.github.capsopasme.assistant.util.Marks
 import io.github.capsopasme.assistant.util.Prefs
 import io.github.capsopasme.assistant.util.SecretDataStore
 import io.github.capsopasme.assistant.voice.VoiceInput
+import io.github.capsopasme.assistant.memory.MemoryStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -78,6 +81,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         click("charge") { startActivity(Intent(requireContext(), ChargeSettingsActivity::class.java)) }
         click("test_model") { testModel() }
         click("diagnostics") { showDiagnostics() }
+        click("memory") { showMemory() }
         findPreference<Preference>(Prefs.KEY_VOICE_RESIDENT)?.setOnPreferenceChangeListener { _, value ->
             // takes effect where the binding is held: the keep-alive service
             VoiceInput.setResident(requireContext(), value == true && prefs.keepAlive)
@@ -107,6 +111,55 @@ class SettingsFragment : PreferenceFragmentCompat() {
         super.onResume()
         KeepAliveService.sync(requireContext())
         refreshStatus()
+        val ctx = requireContext()
+        viewLifecycleOwner.lifecycleScope.launch {
+            updateMemorySummary(withContext(Dispatchers.IO) { runCatching { MemoryStore.get(ctx).count() }.getOrDefault(0) })
+        }
+    }
+
+    /** what the assistant was asked to remember: tap one to delete it */
+    private fun showMemory() {
+        val ctx = requireContext()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val store = MemoryStore.get(ctx)
+            val list = withContext(Dispatchers.IO) { store.all() }
+            updateMemorySummary(list.size)
+            if (list.isEmpty()) {
+                MaterialAlertDialogBuilder(ctx).setTitle("记住的事")
+                    .setMessage("还没有。对助手说「记住……」，例如「记住我的车位在 B2-117」，之后问「车停哪了」就能答上来（不联网也行）。\n\n密码、卡号、证件号不会保存。")
+                    .setPositiveButton("好", null).show()
+                return@launch
+            }
+            val items = list.map { "${it.content}\n${it.whenText()}" }.toTypedArray()
+            MaterialAlertDialogBuilder(ctx).setTitle("记住的事（点一条删除）")
+                .setItems(items) { _, which ->
+                    val m = list[which]
+                    MaterialAlertDialogBuilder(ctx).setMessage("删除「${m.content}」？")
+                        .setPositiveButton("删除") { _, _ ->
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                withContext(Dispatchers.IO) { store.delete(m.id) }
+                                showMemory()
+                            }
+                        }
+                        .setNegativeButton("取消", null).show()
+                }
+                .setNeutralButton("全部清空") { _, _ ->
+                    MaterialAlertDialogBuilder(ctx).setMessage("清空全部 ${list.size} 条记忆？无法恢复。")
+                        .setPositiveButton("清空") { _, _ ->
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                withContext(Dispatchers.IO) { store.clear() }
+                                updateMemorySummary(0)
+                            }
+                        }
+                        .setNegativeButton("取消", null).show()
+                }
+                .setPositiveButton("关闭", null).show()
+        }
+    }
+
+    private fun updateMemorySummary(n: Int) {
+        findPreference<Preference>("memory")?.summary =
+            if (n == 0) "说「记住我的车位在 B2-117」，之后问「车停哪了」。点这里查看、删除" else "已记住 $n 件事，点这里查看、删除"
     }
 
     private fun click(key: String, action: () -> Unit) {
